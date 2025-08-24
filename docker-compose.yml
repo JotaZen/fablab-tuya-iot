@@ -1,0 +1,42 @@
+version: "3.9"
+
+volumes:
+  ha_config:
+
+services:
+  hacs-init:
+    image: alpine:3.19
+    container_name: ha_hacs_init
+    command: >
+      sh -c "
+      set -e;
+      apk add --no-cache curl unzip;
+      mkdir -p /config/custom_components;
+      echo 'Descargando HACS...';
+      curl -L -o /tmp/hacs.zip https://github.com/hacs/integration/releases/latest/download/hacs.zip;
+      unzip -o /tmp/hacs.zip -d /config/custom_components;
+      # OPCIONAL: dejar tuya-local ya copiado
+      curl -L -o /tmp/tuya_local.zip https://github.com/make-all/tuya-local/archive/refs/heads/master.zip || true;
+      unzip -o /tmp/tuya_local.zip -d /tmp || true;
+      rm -rf /config/custom_components/tuya_local || true;
+      mv /tmp/tuya-local-*/custom_components/tuya_local /config/custom_components/tuya_local 2>/dev/null || true;
+      echo 'INIT listo.'
+      "
+    volumes:
+      - ha_config:/config
+    restart: "no"
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    environment:
+      - TZ=America/Santiago
+    volumes:
+      - ha_config:/config
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "8123:8123" # <-- expone el puerto
+    depends_on:
+      hacs-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
