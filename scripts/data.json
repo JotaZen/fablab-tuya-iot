@@ -1,0 +1,20 @@
+{
+  "tarjetas": [
+    {
+      "id": "D69335A4"
+    }
+  ],
+  "breakers": [
+    {
+      "id": "01K4GQ8964RSBY1793HWJBH7KN",
+      "estado": true,
+      "entity_id": "switch.breaker_2_interruptor",
+      "tarjeta": "D69335A4"
+    }
+  ],
+  "arduinos": [
+    {
+      "id": "esp32-1"
+    }
+  ]
+}
