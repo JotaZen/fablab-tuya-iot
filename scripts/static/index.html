@@ -1,187 +1,397 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
-<head>
-  <meta charset="utf-8" />
-  <title>Tuya Breaker - Monitor</title>
-  <style>
-  body { font-family: Arial, sans-serif; margin: 12px; background: #f4f6f8; color:#222 }
-  #events { border: 1px solid #ddd; padding: 8px; height: 60vh; overflow: auto; background:#fff }
-  .event { margin:6px 0; padding:6px; border-bottom:1px solid #eee }
-  .meta { color:#666; font-size:12px }
-  button { margin:4px }
+  <head>
+    <meta charset="utf-8" />
+    <title>Tuya Breaker - Monitor</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 12px;
+        background: #f4f6f8;
+        color: #222;
+      }
+      #events {
+        border: 1px solid #ddd;
+        padding: 8px;
+        height: 60vh;
+        overflow: auto;
+        background: #fff;
+      }
+      .event {
+        margin: 6px 0;
+        padding: 6px;
+        border-bottom: 1px solid #eee;
+      }
+      .meta {
+        color: #666;
+        font-size: 12px;
+      }
+      button {
+        margin: 4px;
+      }
 
-  /* cards */
-  .cards { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:12px }
-  .card { background:#fff; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.08); padding:12px }
-  .card .hdr { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }
-  .badge { font-size:12px; padding:4px 8px; border-radius:999px; color:#fff }
-  .badge.on { background:#28a745 }
-  .badge.off { background:#6c757d }
-  .card pre { background:#f7f9fb; padding:8px; border-radius:6px; overflow:auto }
-  .muted { color:#666; font-size:13px }
-  .small { font-size:12px }
-  .btn { background:#007bff; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer }
-  .btn.secondary { background:#6c757d }
-  .controls { margin-top:8px }
-  </style>
-</head>
-<body>
-  <h1>Tuya Breaker - Monitor</h1>
-  <div style="display:flex;gap:12px;align-items:flex-start">
-    <div style="flex:1">
-      <h3>Arduinos</h3>
-      <div id="arduinos"></div>
-      <h3>Breakers</h3>
-      <div id="breakers"></div>
-    </div>
-    <div style="width:380px; display:flex; flex-direction:column; gap:12px">
-      <div>
-        <h3>Eventos (JSON)</h3>
-        <div id="events"></div>
+      /* cards */
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 12px;
+      }
+      .card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        padding: 12px;
+      }
+      .card .hdr {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .badge {
+        font-size: 12px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        color: #fff;
+      }
+      .badge.on {
+        background: #28a745;
+      }
+      .badge.off {
+        background: #6c757d;
+      }
+      .card pre {
+        background: #f7f9fb;
+        padding: 8px;
+        border-radius: 6px;
+        overflow: auto;
+      }
+      .muted {
+        color: #666;
+        font-size: 13px;
+      }
+      .small {
+        font-size: 12px;
+      }
+      .btn {
+        background: #007bff;
+        color: #fff;
+        border: none;
+        padding: 6px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .btn.secondary {
+        background: #6c757d;
+      }
+      .controls {
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Tuya Breaker - Monitor</h1>
+    <div style="display: flex; gap: 12px; align-items: flex-start">
+      <div style="flex: 1">
+        <h3>Arduinos</h3>
+        <div id="arduinos"></div>
+        <h3>Breakers</h3>
+        <div id="breakers"></div>
       </div>
-      <div>
-        <h3>Tuya Status (líneas)</h3>
-        <div id="tuyastatus" style="border:1px solid #ddd; padding:8px; height:28vh; overflow:auto; background:#fff"></div>
+      <div
+        style="width: 380px; display: flex; flex-direction: column; gap: 12px"
+      >
+        <div>
+          <h3>Eventos (JSON)</h3>
+          <div id="events"></div>
+        </div>
+        <div>
+          <h3>Tuya Status (líneas)</h3>
+          <div
+            id="tuyastatus"
+            style="
+              border: 1px solid #ddd;
+              padding: 8px;
+              height: 28vh;
+              overflow: auto;
+              background: #fff;
+            "
+          ></div>
+        </div>
       </div>
     </div>
-  </div>
-  <script>
-    const ws = new WebSocket((location.protocol==='https:'?'wss://':'ws://') + location.host + '/ws');
-    const events = document.getElementById('events');
-    const tuyastatus = document.getElementById('tuyastatus');
+    <script>
+  let currentModels = { breakers: [], tarjetas: [], arduinos: [] };
+      const ws = new WebSocket(
+        (location.protocol === "https:" ? "wss://" : "ws://") +
+          location.host +
+          "/ws"
+      );
+      const events = document.getElementById("events");
+      const tuyastatus = document.getElementById("tuyastatus");
 
-    // logs full JSON objects (existing behavior)
-    function logEvent(obj){
-      const el = document.createElement('div');
-      el.className='event';
-      el.innerHTML = '<div class="meta">'+(new Date()).toLocaleTimeString()+'</div><pre>'+JSON.stringify(obj,null,2)+'</pre>';
-      events.prepend(el);
-    }
+      // logs full JSON objects (existing behavior)
+      function logEvent(obj) {
+        const el = document.createElement("div");
+        el.className = "event";
+        el.innerHTML =
+          '<div class="meta">' +
+          new Date().toLocaleTimeString() +
+          "</div><pre>" +
+          JSON.stringify(obj, null, 2) +
+          "</pre>";
+        events.prepend(el);
+      }
 
-    // concise, human readable tuya-like line log
-    function makeTuyaLine(obj){
-      const t = (new Date()).toLocaleTimeString();
-      if(!obj) return t + ' - <empty>'; 
-      if(typeof obj === 'string') return t + ' - ' + obj;
-      if(typeof obj !== 'object') return t + ' - ' + String(obj);
-      if(obj.type){
-        switch(obj.type){
-          case 'tuya':
-            return `${t} - tuya ${obj.breaker_id || ''} ${obj.action || ''} => ${obj.success} ${obj.msg || ''}`;
-          case 'tuya:pulse':
-            return `${t} - tuya:pulse ${obj.breaker_id || ''} => ${obj.success} ${obj.msg || ''}`;
-          case 'breakers:update':
-            return `${t} - breakers:update ${obj.id || obj.breaker_id || ''} -> ${obj.state || ''}`;
-          case 'rfid':
-            return `${t} - rfid uid=${obj.uid || ''} origen=${obj.origen || ''}`;
-          case 'info':
-            return `${t} - info ${obj.msg || ''}`;
-          default:
-            // fallback compact
-            try{ return `${t} - ${obj.type} ${JSON.stringify(obj)}` }catch(e){ return `${t} - ${obj.type}` }
+      // concise, human readable tuya-like line log
+      function makeTuyaLine(obj) {
+        const t = new Date().toLocaleTimeString();
+        if (!obj) return t + " - <empty>";
+        if (typeof obj === "string") return t + " - " + obj;
+        if (typeof obj !== "object") return t + " - " + String(obj);
+        if (obj.type) {
+          switch (obj.type) {
+            case "tuya":
+              return `${t} - tuya ${obj.breaker_id || ""} ${
+                obj.action || ""
+              } => ${obj.success} ${obj.msg || ""}`;
+            case "tuya:pulse":
+              return `${t} - tuya:pulse ${obj.breaker_id || ""} => ${
+                obj.success
+              } ${obj.msg || ""}`;
+            case "breakers:update":
+              return `${t} - breakers:update ${
+                obj.id || obj.breaker_id || ""
+              } -> ${obj.state || ""}`;
+            case "rfid":
+              return `${t} - rfid uid=${obj.uid || ""} origen=${
+                obj.origen || ""
+              }`;
+            case "info":
+              return `${t} - info ${obj.msg || ""}`;
+            default:
+              // fallback compact
+              try {
+                return `${t} - ${obj.type} ${JSON.stringify(obj)}`;
+              } catch (e) {
+                return `${t} - ${obj.type}`;
+              }
+          }
+        }
+        return t + " - " + JSON.stringify(obj);
+      }
+
+      function logTuya(obj) {
+        const line = makeTuyaLine(obj);
+        const el = document.createElement("div");
+        el.className = "event";
+        el.style.padding = "4px 6px";
+        el.style.borderBottom = "1px solid #eee";
+        el.textContent = line;
+        tuyastatus.prepend(el);
+      }
+      ws.onopen = () => {
+        logEvent({ type: "info", msg: "conectado ws" });
+        logTuya({ type: "info", msg: "ws conectado" });
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const obj = JSON.parse(ev.data);
+          handleEvent(obj);
+          logEvent(obj);
+          // always mirror a concise tuya-style line so "escucha todo"
+          logTuya(obj);
+        } catch (e) {
+          logEvent({ raw: ev.data });
+          logTuya(ev.data);
+        }
+      };
+      ws.onclose = () => {
+        logEvent({ type: "info", msg: "ws cerrado" });
+        logTuya({ type: "info", msg: "ws cerrado" });
+      };
+
+      // helpers
+      function makeCard(title, bodyHtml) {
+        const el = document.createElement("div");
+        el.className = "event";
+        el.innerHTML =
+          "<strong>" + title + "</strong><div>" + bodyHtml + "</div>";
+        return el;
+      }
+
+      async function fetchModels() {
+        const res = await fetch("/models");
+        const data = await res.json();
+        renderModels(data);
+      }
+
+      function fieldOrDash(v) {
+        return v === null || v === undefined || v === "" ? "—" : v;
+      }
+
+      function renderModels(data) {
+  currentModels = data;
+        const a = document.getElementById("arduinos");
+        const b = document.getElementById("breakers");
+        a.innerHTML = "";
+        b.innerHTML = "";
+
+        const arduinosWrap = document.createElement("div");
+        arduinosWrap.className = "cards";
+        (data.arduinos || []).forEach((ad) => {
+          const body =
+            '<div class="hdr"><div><strong>' +
+            fieldOrDash(ad.id) +
+            '</strong><div class="muted small">Arduino</div></div><div class="muted small">&nbsp;</div></div>' +
+            "<div><pre>" +
+            JSON.stringify(ad, null, 2) +
+            "</pre></div>";
+          const card = document.createElement("div");
+          card.className = "card";
+          card.innerHTML = body;
+          arduinosWrap.appendChild(card);
+        });
+        a.appendChild(arduinosWrap);
+
+        const breakersWrap = document.createElement("div");
+        breakersWrap.className = "cards";
+        (data.breakers || []).forEach((br) => {
+          const tarjeta = (data.tarjetas || []).find(
+            (t) => t.id === br.tarjeta
+          );
+          const estado = br.estado ? "on" : "off";
+          const saldo = fieldOrDash(
+            br.saldo ?? (tarjeta ? tarjeta.saldo : "—")
+          );
+          const power = fieldOrDash(br.power);
+          const energy = fieldOrDash(br.energy);
+          const voltage = fieldOrDash(br.voltage);
+          const current = fieldOrDash(br.current);
+
+          const hdr =
+            '<div class="hdr"><div><strong>Breaker ' +
+            (br.id.substring(0, 8) || "") +
+            '</strong><div class="muted small">ID: ' +
+            fieldOrDash(br.id) +
+            "</div></div>" +
+            '<div><span class="badge ' +
+            (estado === "on" ? "on" : "off") +
+            '">' +
+            (estado === "on" ? "ON" : "OFF") +
+            "</span></div></div>";
+
+          const body =
+            hdr +
+            '<div class="muted">' +
+            br.nombre +
+            "</div><br/>" +
+            '<div class="muted">Saldo: <strong>' +
+            saldo +
+            "</strong><br/>" +
+            "Potencia: <strong>" +
+            power +
+            " W</strong> &nbsp; Energía: <strong>" +
+            energy +
+            " kWh</strong><br/>" +
+            "Voltaje: <strong>" +
+            voltage +
+            " V</strong> &nbsp; Corriente: <strong>" +
+            current +
+            " A</strong>" +
+            "</div>" +
+            '<div style="margin-top:8px">' +
+            (tarjeta
+              ? '<div class="muted">Tarjeta: <strong>' +
+                fieldOrDash(tarjeta.id) +
+                "</strong></div><pre>" +
+                JSON.stringify(tarjeta, null, 2) +
+                "</pre>"
+              : '<div class="muted">Sin tarjeta asignada</div>') +
+            "</div>" +
+            '<div class="controls"><button data-id="' +
+            br.id +
+            '" class="btn">' +
+            (br.estado ? "Apagar" : "Encender") +
+            "</button></div>";
+
+          const card = document.createElement("div");
+          card.className = "card";
+          card.innerHTML = body;
+          breakersWrap.appendChild(card);
+        });
+        b.appendChild(breakersWrap);
+
+        // agregar data-id a cada card para updates incrementales
+        document.querySelectorAll('#breakers .card').forEach(card=>{
+          const idMatch = card.innerHTML.match(/ID: ([^<]+)/);
+          if(idMatch){ card.dataset.bid = idMatch[1]; }
+        });
+
+        // wire buttons
+        document.querySelectorAll(".btn").forEach((btn) => {
+          btn.onclick = async (ev) => {
+            const id = btn.getAttribute("data-id");
+            const res = await fetch(
+              "/breakers/" + encodeURIComponent(id) + "/toggle",
+              { method: "POST" }
+            ).then((r) => r.json());
+            logEvent(res);
+            fetchModels();
+          };
+        });
+      }
+
+      function handleEvent(obj) {
+        // si es update de breaker, refrescar modelos
+        if (obj && obj.type === "breakers:update") {
+          const br = currentModels.breakers.find(x=>x.id===obj.id);
+          if(br){ br.estado = (obj.state === 'on'); updateBreakerCard(br.id); }
+          else { fetchModels(); }
+        }
+        if (obj && obj.type === "breakers:consumption") {
+          const br = currentModels.breakers.find(x=>x.id===obj.id);
+            if(br){
+              if('power' in obj) br.power = obj.power;
+              if('energy' in obj) br.energy = obj.energy;
+              if('voltage' in obj) br.voltage = obj.voltage;
+              if('current' in obj) br.current = obj.current;
+              updateBreakerCard(br.id);
+            }else{
+              fetchModels();
+            }
         }
       }
-      return t + ' - ' + JSON.stringify(obj);
-    }
 
-    function logTuya(obj){
-      const line = makeTuyaLine(obj);
-      const el = document.createElement('div');
-      el.className = 'event';
-      el.style.padding = '4px 6px';
-      el.style.borderBottom = '1px solid #eee';
-      el.textContent = line;
-      tuyastatus.prepend(el);
-    }
-    ws.onopen = () => { logEvent({type:'info', msg:'conectado ws'}); logTuya({type:'info', msg:'ws conectado'}); };
-    ws.onmessage = (ev) => {
-      try{
-        const obj = JSON.parse(ev.data);
-        handleEvent(obj);
-        logEvent(obj);
-        // always mirror a concise tuya-style line so "escucha todo"
-        logTuya(obj);
-      }catch(e){ 
-        logEvent({raw:ev.data});
-        logTuya(ev.data);
+      function updateBreakerCard(id){
+        const container = document.getElementById('breakers');
+        const card = Array.from(container.querySelectorAll('.card')).find(c=>c.dataset.bid===id);
+        if(!card){ return; }
+        const br = currentModels.breakers.find(x=>x.id===id);
+        if(!br){ return; }
+        const tarjeta = (currentModels.tarjetas||[]).find(t=>t.id===br.tarjeta);
+        const estado = br.estado ? 'on':'off';
+        const saldo = (br.saldo ?? (tarjeta? tarjeta.saldo : '—')) ?? '—';
+        function fd(v){ return (v===null||v===undefined||v==='')?'—':v; }
+        const power = fd(br.power);
+        const energy = fd(br.energy);
+        const voltage = fd(br.voltage);
+        const current = fd(br.current);
+        card.querySelector('.badge').className = 'badge '+(estado==='on'?'on':'off');
+        card.querySelector('.badge').textContent = estado==='on'?'ON':'OFF';
+        // Reemplazar bloque de métricas (buscar por texto 'Saldo:')
+        const metricsRegex = /Saldo:[\s\S]*?<\/div>/;
+        card.innerHTML = card.innerHTML.replace(metricsRegex, () => {
+          return '<div class="muted">Saldo: <strong>'+saldo+'</strong><br/>'+
+            'Potencia: <strong>'+power+' W</strong> &nbsp; Energía: <strong>'+energy+' kWh</strong><br/>'+
+            'Voltaje: <strong>'+voltage+' V</strong> &nbsp; Corriente: <strong>'+current+' A</strong>'+
+            '</div>';
+        });
       }
-    };
-    ws.onclose = () => { logEvent({type:'info', msg:'ws cerrado'}); logTuya({type:'info', msg:'ws cerrado'}); };
 
-    // helpers
-    function makeCard(title, bodyHtml){
-      const el = document.createElement('div');
-      el.className='event';
-      el.innerHTML = '<strong>'+title+'</strong><div>'+bodyHtml+'</div>';
-      return el;
-    }
-
-    async function fetchModels(){
-      const res = await fetch('/models');
-      const data = await res.json();
-      renderModels(data);
-    }
-
-    function fieldOrDash(v){ return (v===null||v===undefined||v==='')? '—' : v }
-
-    function renderModels(data){
-      const a = document.getElementById('arduinos');
-      const b = document.getElementById('breakers');
-      a.innerHTML = '';
-      b.innerHTML = '';
-
-      const arduinosWrap = document.createElement('div');
-      arduinosWrap.className = 'cards';
-      (data.arduinos||[]).forEach(ad => {
-        const body = '<div class="hdr"><div><strong>'+fieldOrDash(ad.id)+'</strong><div class="muted small">Arduino</div></div><div class="muted small">&nbsp;</div></div>'+
-          '<div><pre>'+JSON.stringify(ad,null,2)+'</pre></div>';
-        const card = document.createElement('div'); card.className='card'; card.innerHTML = body;
-        arduinosWrap.appendChild(card);
-      });
-      a.appendChild(arduinosWrap);
-
-      const breakersWrap = document.createElement('div');
-      breakersWrap.className = 'cards';
-      (data.breakers||[]).forEach(br => {
-        const tarjeta = (data.tarjetas||[]).find(t=>t.id===br.tarjeta);
-        const estado = br.estado ? 'on' : 'off';
-        const saldo = fieldOrDash(br.saldo ?? (tarjeta? tarjeta.saldo : '—'));
-        const consumo = fieldOrDash(br.consumption_per_sec ?? br.consumption ?? '—');
-
-        const hdr = '<div class="hdr"><div><strong>Breaker '+(br.id.substring(0,8)||'')+'</strong><div class="muted small">ID: '+fieldOrDash(br.id)+'</div></div>'+
-                    '<div><span class="badge '+(estado==='on'?'on':'off')+'">'+(estado==='on'?'ON':'OFF')+'</span></div></div>';
-
-        const body = hdr +
-          '<div class="muted">Saldo: <strong>'+saldo+'</strong> &nbsp; Consumo/s: <strong>'+consumo+'</strong></div>'+
-          '<div style="margin-top:8px">'+(tarjeta?('<div class="muted">Tarjeta: <strong>'+fieldOrDash(tarjeta.id)+'</strong></div><pre>'+JSON.stringify(tarjeta,null,2)+'</pre>'):'<div class="muted">Sin tarjeta asignada</div>')+'</div>'+
-          '<div class="controls"><button data-id="'+br.id+'" class="btn">'+(br.estado? 'Apagar':'Encender')+'</button></div>';
-
-        const card = document.createElement('div'); card.className='card'; card.innerHTML = body;
-        breakersWrap.appendChild(card);
-      });
-      b.appendChild(breakersWrap);
-
-      // wire buttons
-      document.querySelectorAll('.btn').forEach(btn=>{
-        btn.onclick = async (ev) => {
-          const id = btn.getAttribute('data-id');
-          const res = await fetch('/breakers/'+encodeURIComponent(id)+'/toggle', {method:'POST'}).then(r=>r.json());
-          logEvent(res);
-          fetchModels();
-        };
-      });
-    }
-
-    function handleEvent(obj){
-      // si es update de breaker, refrescar modelos
-      if(obj && obj.type === 'breakers:update'){
-        fetchModels();
-      }
-    }
-
-  // carga inicial y refresco periódico
-  fetchModels();
-  setInterval(fetchModels, 5000);
-  </script>
-</body>
+      // carga inicial y refresco periódico
+      fetchModels();
+      setInterval(fetchModels, 5000);
+    </script>
+  </body>
 </html>

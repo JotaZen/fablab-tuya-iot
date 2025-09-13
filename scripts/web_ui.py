@@ -18,14 +18,14 @@ except Exception:
 
 try:
     # cuando se ejecuta como paquete
-    from .models_loader import get_models, get_breaker, toggle_breaker, set_breaker_state, get_tarjeta_for_breaker
+    from .models_loader import get_models, get_breaker, toggle_breaker, set_breaker_state, get_tarjeta_for_breaker, update_breaker_fields
 except Exception:
     try:
         # cuando se ejecuta como script desde la raíz del repo
-        from scripts.models_loader import get_models, get_breaker, toggle_breaker, set_breaker_state, get_tarjeta_for_breaker
+        from scripts.models_loader import get_models, get_breaker, toggle_breaker, set_breaker_state, get_tarjeta_for_breaker, update_breaker_fields
     except Exception:
         # fallback: import directo si el script está en PYTHONPATH
-        from models_loader import get_models, get_breaker, toggle_breaker, set_breaker_state, get_tarjeta_for_breaker
+        from models_loader import get_models, get_breaker, toggle_breaker, set_breaker_state, get_tarjeta_for_breaker, update_breaker_fields
 # import tuya client separately (not nested inside models import) with fallbacks
 try:
     from .tuya_client import perform_action as tuya_perform, perform_pulse as tuya_perform_pulse
@@ -42,14 +42,24 @@ except Exception:
             def tuya_perform_pulse(device_id: str, duration_ms: int = 500):
                 return False, 'tuya_client not available'
 
+# NUEVO: cargar config central
+try:
+    from .config import HA_URL as CFG_HA_URL, HA_TOKEN as CFG_HA_TOKEN
+except Exception:
+    try:
+        from config import HA_URL as CFG_HA_URL, HA_TOKEN as CFG_HA_TOKEN
+    except Exception:
+        CFG_HA_URL = os.environ.get('HA_URL') or 'http://localhost:8123'
+        CFG_HA_TOKEN = os.environ.get('HA_TOKEN') or ''
+
 API_KEY = os.environ.get('API_KEY')
 BASE_DIR = os.path.dirname(__file__)
 DATA_PATH = os.path.join(BASE_DIR, 'data.json')
 
-# Home Assistant config (opcional)
-HA_URL = os.getenv("HA_URL", "http://localhost:8123")  # Cambia a http://<tu-ip>:8123 si corres desde otra máquina
-HA_WS  = os.getenv("HA_WS",  HA_URL.replace("http", "ws") + "/api/websocket")
-HA_TOKEN = os.getenv("HA_TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjZmIxZDYyNmVlODc0MjY2OTJhYjMwZmUxYmI0YTBhMiIsImlhdCI6MTc1NTY0MjU4OSwiZXhwIjoyMDcxMDAyNTg5fQ.v7yQXhrD41Xuba57UMRmcLtGtO6fSfEZLUT1QQ0kPN4")
+# Usar config central (eliminar token hardcodeado aquí)
+HA_URL = CFG_HA_URL
+HA_TOKEN = CFG_HA_TOKEN
+HA_WS  = os.getenv('HA_WS') or (HA_URL.replace('http','ws') + '/api/websocket')
 
 
 class ServerState:
@@ -77,6 +87,41 @@ def load_models():
             return json.load(f)
     except Exception:
         return {"tarjetas": [], "breakers": [], "arduinos": []}
+
+
+def init_models_startup():
+    """Cargar y registrar un resumen de data.json al iniciar la app.
+    Crea el archivo si no existe."""
+    if not os.path.exists(DATA_PATH):
+        with open(DATA_PATH, 'w', encoding='utf8') as f:
+            json.dump({"tarjetas": [], "breakers": [], "arduinos": []}, f, ensure_ascii=False, indent=2)
+        print(f"[startup] data.json no existía, creado en {DATA_PATH}")
+    models = load_models()
+    print(f"[startup] data.json cargado ({DATA_PATH}) -> breakers={len(models.get('breakers',[]))} tarjetas={len(models.get('tarjetas',[]))} arduinos={len(models.get('arduinos',[]))}")
+    return models
+
+
+async def watch_data_file(app):
+    """Vigila cambios de mtime en data.json y broadcast de modelos actualizados."""
+    try:
+        last_mtime = os.path.getmtime(DATA_PATH)
+    except Exception:
+        last_mtime = None
+    print(f"[watcher] iniciado para {DATA_PATH}")
+    while True:
+        await asyncio.sleep(2)
+        try:
+            mtime = os.path.getmtime(DATA_PATH)
+        except Exception:
+            continue
+        if last_mtime is None:
+            last_mtime = mtime
+            continue
+        if mtime != last_mtime:
+            last_mtime = mtime
+            models = load_models()
+            print(f"[watcher] cambio detectado en data.json -> broadcast models")
+            await state.broadcast({'type': 'models', 'data': models})
 
 
 async def index(request):
@@ -215,6 +260,27 @@ async def breaker_pulse_handler(request):
     return web.json_response({'ok': True, 'breaker_id': bid, 'tuya': svc_res.get('tuya')})
 
 
+async def breakers_consumption_handler(request):
+    """Devuelve métricas actuales de consumo de todos los breakers.
+
+    Respuesta: { ok: true, breakers: [ {id, estado, power, energy, voltage, current} ] }
+    """
+    models = load_models()
+    out = []
+    for b in models.get('breakers', []):
+        entry = {
+            'id': b.get('id'),
+            'estado': b.get('estado'),
+            'power': b.get('power'),
+            'energy': b.get('energy'),
+            'voltage': b.get('voltage'),
+            'current': b.get('current'),
+        }
+        out.append(entry)
+        print(f"[consumption] breaker={entry['id']} estado={entry['estado']} power={entry['power']}W energy={entry['energy']}kWh voltage={entry['voltage']}V current={entry['current']}A")
+    return web.json_response({'ok': True, 'breakers': out})
+
+
 async def ha_listener():
     """Conecta al websocket de Home Assistant y re-broadcast eventos state_changed."""
     if not (HA_WS and HA_TOKEN):
@@ -253,18 +319,85 @@ async def ha_listener():
                     # if the new state corresponds to a breaker entity, update local models and notify clients
                     try:
                         st = None
+                        attrs = {}
                         if isinstance(new_state, dict):
                             st = new_state.get('state')
+                            attrs = new_state.get('attributes') or {}
                         # only proceed if we have an entity_id and a state string
-                        if entity_id and isinstance(st, str):
+                        if entity_id:
                             models = load_models()
-                            for b in models.get('breakers', []):
-                                if b.get('entity_id') == entity_id:
-                                    # persist the breaker state (True if 'on')
-                                    set_breaker_state(DATA_PATH, b.get('id'), True if st == 'on' else False)
-                                    # notify clients that breaker changed
-                                    asyncio.create_task(state.broadcast({'type':'breakers:update','id': b.get('id'),'state': 'on' if st=='on' else 'off'}))
-                                    break
+                            breakers = models.get('breakers', [])
+                            matched = []
+                            for b in breakers:
+                                ids = set()
+                                if b.get('entity_id'):
+                                    ids.add(b.get('entity_id'))
+                                extra = b.get('entities') or []
+                                if isinstance(extra, list):
+                                    for e in extra:
+                                        if isinstance(e, str):
+                                            ids.add(e)
+                                for key in ('power_entity','energy_entity','voltage_entity','current_entity'):
+                                    val = b.get(key)
+                                    if isinstance(val, str):
+                                        ids.add(val)
+                                if entity_id in ids:
+                                    matched.append(b)
+                            if not matched:
+                                # debug de entidades no mapeadas
+                                print(f"[ha_listener] entidad sin breaker: {entity_id}")
+                            for b in matched:
+                                # actualizar estado solo si la entidad es principal o un switch
+                                domain = entity_id.split('.',1)[0] if '.' in entity_id else ''
+                                if st is not None and (entity_id == b.get('entity_id') or domain == 'switch'):
+                                    new_state_bool = (st == 'on')
+                                    if bool(b.get('estado')) != new_state_bool:
+                                        set_breaker_state(DATA_PATH, b.get('id'), new_state_bool)
+                                        asyncio.create_task(state.broadcast({'type':'breakers:update','id': b.get('id'),'state': 'on' if new_state_bool else 'off'}))
+                                # métricas
+                                # Si la entidad actual coincide con una entidad específica de métrica usar su state directo si es numérico
+                                def extract_numeric(val):
+                                    try:
+                                        if val is None:
+                                            return None
+                                        if isinstance(val, (int,float)):
+                                            return val
+                                        return float(str(val))
+                                    except Exception:
+                                        return None
+                                power = None
+                                energy = None
+                                voltage = None
+                                current = None
+                                if entity_id == b.get('power_entity'):
+                                    power = extract_numeric(st)
+                                if entity_id == b.get('energy_entity'):
+                                    energy = extract_numeric(st)
+                                if entity_id == b.get('voltage_entity'):
+                                    voltage = extract_numeric(st)
+                                if entity_id == b.get('current_entity'):
+                                    current = extract_numeric(st)
+                                # Si alguna métrica sigue None tomarla de atributos genéricos
+                                if power is None:
+                                    power = extract_numeric(attrs.get('power') or attrs.get('current_power_w') or attrs.get('power_w'))
+                                if energy is None:
+                                    energy = extract_numeric(attrs.get('energy') or attrs.get('today_energy_kwh') or attrs.get('energy_kwh'))
+                                if voltage is None:
+                                    voltage = extract_numeric(attrs.get('voltage') or attrs.get('voltage_v'))
+                                if current is None:
+                                    current = extract_numeric(attrs.get('current') or attrs.get('current_a'))
+                                fields = {}
+                                if power is not None:
+                                    fields['power'] = power
+                                if energy is not None:
+                                    fields['energy'] = energy
+                                if voltage is not None:
+                                    fields['voltage'] = voltage
+                                if current is not None:
+                                    fields['current'] = current
+                                if fields:
+                                    update_breaker_fields(DATA_PATH, b.get('id'), **fields)
+                                    asyncio.create_task(state.broadcast({'type':'breakers:consumption','id': b.get('id'), **fields}))
                     except Exception as e:
                         print('ha_listener update error', e)
     except Exception as e:
@@ -280,6 +413,7 @@ def make_app():
     app.router.add_post('/breakers/{id}/toggle', breaker_toggle_handler)
     app.router.add_post('/breakers/{id}/set', breaker_set_handler)
     app.router.add_post('/breakers/{id}/pulse', breaker_pulse_handler)
+    app.router.add_get('/breakers/consumption', breakers_consumption_handler)
     # static
     static_dir = os.path.join(BASE_DIR, 'static')
     app.router.add_static('/static/', static_dir, show_index=True)
@@ -299,6 +433,46 @@ def make_app():
 
         app.on_startup.append(_start_ha)
         app.on_cleanup.append(_stop_ha)
+    # always load models and start watcher
+    async def _init_models(app):
+        init_models_startup()
+        app['watcher_task'] = asyncio.create_task(watch_data_file(app))
+
+    async def _cleanup_models(app):
+        t = app.get('watcher_task')
+        if t:
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+
+    app.on_startup.append(_init_models)
+    # sync inicial de breakers desde HA (estados y consumo)
+    try:
+        from .breaker_service import sync_all_breakers_from_ha
+    except Exception:
+        try:
+            from breaker_service import sync_all_breakers_from_ha
+        except Exception:
+            sync_all_breakers_from_ha = None
+
+    if HA_URL and HA_TOKEN:
+        async def _sync_ha(app):
+            if sync_all_breakers_from_ha:
+                res = await sync_all_breakers_from_ha(DATA_PATH)
+                if res.get('ok'):
+                    # broadcast de cada breaker actualizado
+                    for u in res.get('updated', []):
+                        await state.broadcast({'type': 'breakers:update', 'id': u['id'], 'state': 'on' if u.get('estado') else 'off'})
+                        m = {k:v for k,v in u.items() if k in ('power','energy','voltage','current') and v is not None}
+                        if m:
+                            m.update({'type':'breakers:consumption','id': u['id']})
+                            await state.broadcast(m)
+                else:
+                    print('sync_all_breakers_from_ha error', res.get('error'))
+        app.on_startup.append(_sync_ha)
+    app.on_cleanup.append(_cleanup_models)
     return app
 
 
