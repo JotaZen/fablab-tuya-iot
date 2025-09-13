@@ -1,0 +1,112 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
+
+const char* ssid = "Olimpiadas";
+const char* password = "Es secreto";
+
+const char* sheetUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTGMNdwV8TfLTfnMhWM7JQfokb67YaS11Yw0A0Rb5T7RvDmbU1DMFDrjdpybGuX0qA3f3Ymnmqbs44M/pub?gid=0&single=true&output=csv";
+
+String ipObtenida = "";
+const char* espID = "ESP8266_01";  // Identificador único del ESP
+String datoNFC = "123456ABC";      // Dato NFC de ejemplo
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  WiFi.begin(ssid, password);
+  Serial.print("Conectando a WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.println("WiFi conectado!");
+  Serial.print("IP local: ");
+  Serial.println(WiFi.localIP());
+
+  obtenerIPdesdeGoogleSheet();
+
+  Serial.print("IP obtenida desde Google Sheet: ");
+  Serial.println(ipObtenida);
+
+  if (ipObtenida.length() > 0) {
+    enviarJsonAPrivada(ipObtenida);
+  }
+}
+
+void loop() {
+  // Aquí puedes agregar más lógica si quieres
+}
+
+void obtenerIPdesdeGoogleSheet() {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    http.begin(client, sheetUrl);
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);  // Seguir redirecciones
+
+    int httpCode = http.GET();
+    if (httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      Serial.println("Datos recibidos del Google Sheet (CSV):");
+      Serial.println(payload);
+
+      int primerSalto = payload.indexOf('\n');
+      String primeraLinea = (primerSalto > 0) ? payload.substring(0, primerSalto) : payload;
+
+      Serial.print("Primera línea: ");
+      Serial.println(primeraLinea);
+
+      int primerComa = primeraLinea.indexOf(',');
+      if (primerComa > 0) {
+        ipObtenida = primeraLinea.substring(0, primerComa);
+      } else {
+        ipObtenida = primeraLinea;
+      }
+      ipObtenida.trim();
+
+      Serial.print("IP extraída: ");
+      Serial.println(ipObtenida);
+
+    } else {
+      Serial.printf("Error en HTTP GET: %d\n", httpCode);
+    }
+    http.end();
+  } else {
+    Serial.println("WiFi no conectado");
+  }
+}
+
+void enviarJsonAPrivada(String ip) {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClient client;
+    HTTPClient http;
+
+    String url = "http://" + ip + "/rfid";
+
+    Serial.print("Enviando JSON a: ");
+    Serial.println(url);
+
+    http.begin(client, url);
+    http.addHeader("Content-Type", "application/json");
+
+    String jsonPayload = "{\"id\":\"" + String(espID) + "\",\"nfc\":\"" + datoNFC + "\"}";
+
+    int httpResponseCode = http.POST(jsonPayload);
+
+    if (httpResponseCode > 0) {
+      Serial.printf("Respuesta HTTP: %d\n", httpResponseCode);
+      String response = http.getString();
+      Serial.println("Respuesta del servidor:");
+      Serial.println(response);
+    } else {
+      Serial.printf("Error en POST: %s\n", http.errorToString(httpResponseCode).c_str());
+    }
+    http.end();
+  } else {
+    Serial.println("WiFi no conectado");
+  }
+}
