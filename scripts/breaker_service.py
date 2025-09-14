@@ -121,6 +121,19 @@ async def set_breaker(path: str, breaker_id: str, state: bool) -> Dict[str, Any]
         ha_res = await _call_ha_service(entity, svc)
         res['ha'] = ha_res
 
+    # Si encendemos el breaker, inicializar su saldo desde la tarjeta asociada (si existe)
+    if state:
+        try:
+            tarjeta = get_tarjeta_for_breaker(path, br)
+            if tarjeta and 'saldo' in tarjeta:
+                # persistir saldo y max_saldo en el breaker
+                if update_breaker_fields:
+                    updated = update_breaker_fields(path, breaker_id, saldo=tarjeta.get('saldo'), max_saldo=tarjeta.get('saldo'))
+                    if updated is not None:
+                        res['breaker'] = updated
+        except Exception:
+            pass
+
     return res
 
 
@@ -146,6 +159,16 @@ async def toggle_breaker_service(path: str, breaker_id: str) -> Dict[str, Any]:
     if updated.get('entity_id') and HA_URL and HA_TOKEN:
         svc = 'turn_on' if new_state else 'turn_off'
         ha = await _call_ha_service(updated.get('entity_id'), svc)
+    # Si encendemos por toggle, inicializar saldo desde la tarjeta asociada
+    if new_state:
+        try:
+            tarjeta = get_tarjeta_for_breaker(path, updated)
+            if tarjeta and 'saldo' in tarjeta and update_breaker_fields:
+                updated2 = update_breaker_fields(path, breaker_id, saldo=tarjeta.get('saldo'), max_saldo=tarjeta.get('saldo'))
+                if updated2 is not None:
+                    updated = updated2
+        except Exception:
+            pass
     # debug
     print(f"toggle_breaker_service: breaker={breaker_id} {current} -> {new_state} tuya_success={tuya.get('success')} msg={tuya.get('msg')}")
     return {'ok': True, 'breaker': updated, 'tuya': tuya, 'ha': ha}
@@ -259,11 +282,12 @@ async def sync_all_breakers_from_ha(path: str) -> Dict[str, Any]:
         base_name = base_entity.split('.', 1)[1]
         # Si ya hay métricas cargadas, saltar (se actualizarán abajo igualmente)
         # Localizar sensores candidatos
+        # Añadimos sufijos comunes y variantes trifásicas (phase_a) para cubrir sensores con nombres distintos
         for metric, suffixes in {
-            'power': ['power', 'active_power', 'current_power', 'power_w'],
-            'voltage': ['voltage', 'voltage_v'],
-            'current': ['current', 'current_a'],
-            'energy': ['energy', 'energy_total', 'total_energy', 'energy_kwh']
+            'power': ['power', 'active_power', 'current_power', 'power_w', 'phase_a_power', 'phase_a_active_power'],
+            'voltage': ['voltage', 'voltage_v', 'phase_a_voltage', 'phase_a_phase_voltage'],
+            'current': ['current', 'current_a', 'phase_a_current', 'phase_a_i'],
+            'energy': ['energy', 'energy_total', 'total_energy', 'energy_kwh', 'phase_a_energy']
         }.items():
             explicit_key = f'{metric}_entity'
             if b.get(explicit_key):

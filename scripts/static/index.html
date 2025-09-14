@@ -65,6 +65,7 @@
         padding: 8px;
         border-radius: 6px;
         overflow: auto;
+        font-size: 11px; /* JSON aún más pequeño para tarjetas */
       }
       .muted {
         color: #666;
@@ -87,6 +88,7 @@
       .controls {
         margin-top: 8px;
       }
+      #events pre, #tuyastatus { font-size: 12px; }
     </style>
   </head>
   <body>
@@ -106,17 +108,12 @@
           <div id="events"></div>
         </div>
         <div>
-          <h3>Tuya Status (líneas)</h3>
-          <div
-            id="tuyastatus"
-            style="
-              border: 1px solid #ddd;
-              padding: 8px;
-              height: 28vh;
-              overflow: auto;
-              background: #fff;
-            "
-          ></div>
+          <h3>Tuya Status (JSON formateado)</h3>
+          <div id="tuyastatus" style="border:1px solid #ddd;padding:8px;height:18vh;overflow:auto;background:#fff;white-space:pre-wrap;"></div>
+        </div>
+        <div>
+          <h3>Tarjetas</h3>
+          <div id="tarjetas-controls"></div>
         </div>
       </div>
     </div>
@@ -143,83 +140,6 @@
         events.prepend(el);
       }
 
-      // concise, human readable tuya-like line log
-      function makeTuyaLine(obj) {
-        const t = new Date().toLocaleTimeString();
-        if (!obj) return t + " - <empty>";
-        if (typeof obj === "string") return t + " - " + obj;
-        if (typeof obj !== "object") return t + " - " + String(obj);
-        if (obj.type) {
-          switch (obj.type) {
-            case "tuya":
-              return `${t} - tuya ${obj.breaker_id || ""} ${
-                obj.action || ""
-              } => ${obj.success} ${obj.msg || ""}`;
-            case "tuya:pulse":
-              return `${t} - tuya:pulse ${obj.breaker_id || ""} => ${
-                obj.success
-              } ${obj.msg || ""}`;
-            case "breakers:update":
-              return `${t} - breakers:update ${
-                obj.id || obj.breaker_id || ""
-              } -> ${obj.state || ""}`;
-            case "rfid":
-              return `${t} - rfid uid=${obj.uid || ""} origen=${
-                obj.origen || ""
-              }`;
-            case "info":
-              return `${t} - info ${obj.msg || ""}`;
-            default:
-              // fallback compact
-              try {
-                return `${t} - ${obj.type} ${JSON.stringify(obj)}`;
-              } catch (e) {
-                return `${t} - ${obj.type}`;
-              }
-          }
-        }
-        return t + " - " + JSON.stringify(obj);
-      }
-
-      function logTuya(obj) {
-        const line = makeTuyaLine(obj);
-        const el = document.createElement("div");
-        el.className = "event";
-        el.style.padding = "4px 6px";
-        el.style.borderBottom = "1px solid #eee";
-        el.textContent = line;
-        tuyastatus.prepend(el);
-      }
-      ws.onopen = () => {
-        logEvent({ type: "info", msg: "conectado ws" });
-        logTuya({ type: "info", msg: "ws conectado" });
-      };
-      ws.onmessage = (ev) => {
-        try {
-          const obj = JSON.parse(ev.data);
-          handleEvent(obj);
-          logEvent(obj);
-          // always mirror a concise tuya-style line so "escucha todo"
-          logTuya(obj);
-        } catch (e) {
-          logEvent({ raw: ev.data });
-          logTuya(ev.data);
-        }
-      };
-      ws.onclose = () => {
-        logEvent({ type: "info", msg: "ws cerrado" });
-        logTuya({ type: "info", msg: "ws cerrado" });
-      };
-
-      // helpers
-      function makeCard(title, bodyHtml) {
-        const el = document.createElement("div");
-        el.className = "event";
-        el.innerHTML =
-          "<strong>" + title + "</strong><div>" + bodyHtml + "</div>";
-        return el;
-      }
-
       async function fetchModels() {
         const res = await fetch("/models");
         const data = await res.json();
@@ -240,13 +160,12 @@
         const arduinosWrap = document.createElement("div");
         arduinosWrap.className = "cards";
         (data.arduinos || []).forEach((ad) => {
+          const lastHtml = ad.last ? '<div class="muted small">Último:<pre style="font-size:12px">'+JSON.stringify(ad.last, null, 2)+'</pre></div>' : '<div class="muted small">Sin datos</div>';
           const body =
             '<div class="hdr"><div><strong>' +
             fieldOrDash(ad.id) +
             '</strong><div class="muted small">Arduino</div></div><div class="muted small">&nbsp;</div></div>' +
-            "<div><pre>" +
-            JSON.stringify(ad, null, 2) +
-            "</pre></div>";
+            "<div>" + lastHtml + "</div>";
           const card = document.createElement("div");
           card.className = "card";
           card.innerHTML = body;
@@ -282,38 +201,23 @@
             "</span></div></div>";
 
           const body =
-            hdr +
-            '<div class="muted">' +
-            br.nombre +
-            "</div><br/>" +
-            '<div class="muted">Saldo: <strong>' +
-            saldo +
-            "</strong><br/>" +
-            "Potencia: <strong>" +
-            power +
-            " W</strong> &nbsp; Energía: <strong>" +
-            energy +
-            " kWh</strong><br/>" +
-            "Voltaje: <strong>" +
-            voltage +
-            " V</strong> &nbsp; Corriente: <strong>" +
-            current +
-            " A</strong>" +
-            "</div>" +
-            '<div style="margin-top:8px">' +
-            (tarjeta
-              ? '<div class="muted">Tarjeta: <strong>' +
-                fieldOrDash(tarjeta.id) +
-                "</strong></div><pre>" +
-                JSON.stringify(tarjeta, null, 2) +
-                "</pre>"
-              : '<div class="muted">Sin tarjeta asignada</div>') +
-            "</div>" +
-            '<div class="controls"><button data-id="' +
-            br.id +
-            '" class="btn">' +
-            (br.estado ? "Apagar" : "Encender") +
-            "</button></div>";
+              hdr +
+              '<div class="muted">' +
+              br.nombre +
+              "</div><br/>" +
+              '<div class="muted">Potencia: <strong>' + power + ' W</strong> &nbsp; Energía: <strong>' + energy + ' kWh</strong><br/>' +
+              'Voltaje: <strong>' + voltage + ' V</strong> &nbsp; Corriente: <strong>' + current + ' A</strong>' +
+              "</div>" +
+              '<div style="margin-top:8px">' +
+              (tarjeta
+                ? '<div class="tarjeta-block" style="border-left:3px solid #007bff;padding-left:8px;border-radius:4px;background:#f8fbff;">' +
+                    '<div class="muted small">Tarjeta asociada: <strong>' + fieldOrDash(tarjeta.id) + '</strong></div>' +
+                    '<div class="muted small">Saldo tarjeta: <strong class="tarjeta-saldo" data-tid-saldo="' + tarjeta.id + '">' + fieldOrDash(tarjeta.saldo) + '</strong></div>' +
+                    '<div class="muted small" style="margin-top:6px">Saldo del breaker: <span class="breaker-saldo" data-bid-saldo="' + br.id + '">' + (br.saldo===undefined||br.saldo===null?'—':br.saldo) + '</span> <button class="btn secondary btn-edit-saldo" data-bid="' + br.id + '">Editar</button></div>' +
+                  '</div>'
+                : '<div class="muted">Sin tarjeta asignada</div>') +
+              "</div>" +
+              '<div class="controls"><button data-id="' + br.id + '" class="btn">' + (br.estado ? "Apagar" : "Encender") + "</button></div>";
 
           const card = document.createElement("div");
           card.className = "card";
@@ -328,10 +232,11 @@
           if(idMatch){ card.dataset.bid = idMatch[1]; }
         });
 
-        // wire buttons
-        document.querySelectorAll(".btn").forEach((btn) => {
+        // wire only toggle buttons (those with data-id) to avoid interfering with edit/save buttons
+        document.querySelectorAll("button[data-id]").forEach((btn) => {
           btn.onclick = async (ev) => {
             const id = btn.getAttribute("data-id");
+            if(!id) return;
             const res = await fetch(
               "/breakers/" + encodeURIComponent(id) + "/toggle",
               { method: "POST" }
@@ -340,7 +245,70 @@
             fetchModels();
           };
         });
+
+      // Controles para tarjetas: lista read-only en la barra lateral
+      const tarjetasDiv = document.getElementById('tarjetas-controls');
+      if(tarjetasDiv){
+        tarjetasDiv.innerHTML = '';
+        (data.tarjetas||[]).forEach(t=>{
+          const el = document.createElement('div');
+          el.className = 'card';
+          el.innerHTML = '<div class="hdr"><div><strong>Tarjeta ' + (t.id||'') + '</strong><div class="muted small">ID tarjeta</div></div></div>'+
+            '<div class="muted">Saldo: <strong>' + (t.saldo===undefined||t.saldo===null? '—' : t.saldo) + '</strong></div>';
+          tarjetasDiv.appendChild(el);
+        });
       }
+
+      // Event delegation para manejar edición/guardado de saldo dentro de los breakers
+      const breakersContainer = document.getElementById('breakers');
+      breakersContainer.addEventListener('click', async (ev)=>{
+        const target = ev.target;
+        if(target.matches('.btn-edit-saldo')){
+          const bid = target.getAttribute('data-bid');
+          // mostrar input inline
+          const displaySpan = document.querySelector('[data-bid-saldo="'+bid+'"]');
+          if(!displaySpan) return;
+          const current = displaySpan.textContent.trim();
+          const editHtml = '<input type="text" class="input-saldo-edit" data-bid-input="'+bid+'" value="'+(current==='—'?'':current)+'" style="width:100px"/> <button class="btn btn-save-saldo" data-bid-save="'+bid+'">Guardar</button> <button class="btn secondary btn-cancel-saldo" data-bid-cancel="'+bid+'">Cancelar</button>';
+          displaySpan.style.display = 'none';
+          target.style.display = 'none';
+          // insertar contenedor de edición
+          let editCont = document.querySelector('.edit-saldo-'+bid);
+          if(!editCont){
+            editCont = document.createElement('span');
+            editCont.className = 'edit-saldo-'+bid;
+            target.parentNode.appendChild(editCont);
+          }
+          editCont.innerHTML = editHtml;
+        } else if(target.matches('.btn-save-saldo')){
+          const bid = target.getAttribute('data-bid-save');
+          const input = document.querySelector('.input-saldo-edit[data-bid-input="'+bid+'"]');
+          if(!input) return;
+          const val = input.value;
+          const br = (currentModels.breakers||[]).find(x=>x.id===bid);
+          if(!br || !br.tarjeta){ logEvent({ok:false,error:'breaker sin tarjeta asociada'}); return; }
+          const tid = br.tarjeta;
+          const res = await fetch('/tarjetas/'+encodeURIComponent(tid)+'/saldo', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({saldo: val})}).then(r=>r.json());
+          logEvent(res);
+          // limpiar UI (volver a mostrar span) y refrescar modelos
+          const displaySpan = document.querySelector('[data-bid-saldo="'+bid+'"]');
+          const editCont = document.querySelector('.edit-saldo-'+bid);
+          const editBtn = document.querySelector('.btn-edit-saldo[data-bid="'+bid+'"]');
+          if(editCont) editCont.innerHTML = '';
+          if(displaySpan) { displaySpan.style.display = ''; }
+          if(editBtn) { editBtn.style.display = ''; }
+          fetchModels();
+        } else if(target.matches('.btn-cancel-saldo')){
+          const bid = target.getAttribute('data-bid-cancel');
+          const displaySpan = document.querySelector('[data-bid-saldo="'+bid+'"]');
+          const editCont = document.querySelector('.edit-saldo-'+bid);
+          const editBtn = document.querySelector('.btn-edit-saldo[data-bid="'+bid+'"]');
+          if(editCont) editCont.innerHTML = '';
+          if(displaySpan) { displaySpan.style.display = ''; }
+          if(editBtn) { editBtn.style.display = ''; }
+        }
+      });
+       }
 
       function handleEvent(obj) {
         // si es update de breaker, refrescar modelos
@@ -360,6 +328,17 @@
             }else{
               fetchModels();
             }
+        }
+        // actualizar tarjetas y arduinos a partir de broadcasts
+        if(obj && obj.type === 'tarjetas:update'){
+          const t = currentModels.tarjetas.find(x=>x.id===obj.id);
+          if(t){ Object.assign(t, obj.tarjeta); fetchModels(); }
+          else { fetchModels(); }
+        }
+        if(obj && obj.type === 'arduinos:update'){
+          const ad = currentModels.arduinos.find(x=>x.id===obj.id);
+          if(ad){ ad.last = obj.last; fetchModels(); }
+          else { fetchModels(); }
         }
       }
 
@@ -389,9 +368,41 @@
         });
       }
 
+      // Mostrar y mantener un historial corto de Tuya Status como JSON formateado
+      const tuyaLog = [];
+      function logTuya(obj){
+        try{
+          tuyaLog.unshift(obj);
+          if(tuyaLog.length>50) tuyaLog.length = 50;
+          tuyastatus.textContent = tuyaLog.map(x=>JSON.stringify(x,null,2)).join('\n---\n');
+        }catch(e){
+          tuyastatus.textContent = String(obj);
+        }
+      }
+
       // carga inicial y refresco periódico
       fetchModels();
       setInterval(fetchModels, 5000);
+      ws.onopen = () => {
+        logEvent({ type: "info", msg: "conectado ws" });
+        logTuya({ type: "info", msg: "ws conectado" });
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const obj = JSON.parse(ev.data);
+          handleEvent(obj);
+          logEvent(obj);
+          // always mirror a concise tuya-style line so "escucha todo"
+          logTuya(obj);
+        } catch (e) {
+          logEvent({ raw: ev.data });
+          logTuya(ev.data);
+        }
+      };
+      ws.onclose = () => {
+        logEvent({ type: "info", msg: "ws cerrado" });
+        logTuya({ type: "info", msg: "ws cerrado" });
+      };
     </script>
   </body>
 </html>

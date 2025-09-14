@@ -1,2 +1,4 @@
 tinytuya
 aiohttp
+requests
+websockets

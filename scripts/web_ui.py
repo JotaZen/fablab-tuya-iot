@@ -11,6 +11,7 @@ from aiohttp import web
 from typing import Set
 import aiohttp
 import websockets
+import re
 try:
     from .breaker_service import set_breaker, toggle_breaker_service, pulse_breaker_service
 except Exception:
@@ -87,6 +88,19 @@ def load_models():
             return json.load(f)
     except Exception:
         return {"tarjetas": [], "breakers": [], "arduinos": []}
+
+
+def save_models(models: dict):
+    """Persistir models en DATA_PATH atomically."""
+    try:
+        tmp = DATA_PATH + '.tmp'
+        with open(tmp, 'w', encoding='utf8') as f:
+            json.dump(models, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, DATA_PATH)
+        return True
+    except Exception as e:
+        print('save_models error', e)
+        return False
 
 
 def init_models_startup():
@@ -171,6 +185,30 @@ async def rfid_post(request):
     print('RFID received:', json.dumps(data, ensure_ascii=False))
 
     # broadcast a websockets
+    # guardar ultimo dato en el arduino si existe
+    if origen:
+        try:
+            models = load_models()
+            arduinos = models.get('arduinos', [])
+            matched = None
+            for ad in arduinos:
+                if ad.get('id') == origen:
+                    matched = ad
+                    break
+            if matched is None:
+                # intentar encontrar por campo 'arduino' en payload
+                for ad in arduinos:
+                    if ad.get('id') == data.get('arduino'):
+                        matched = ad
+                        break
+            if matched is not None:
+                matched['last'] = data
+                # persistir y notificar cambio
+                if save_models(models):
+                    asyncio.create_task(state.broadcast({'type': 'arduinos:update', 'id': matched['id'], 'last': matched['last']}))
+        except Exception as e:
+            print('rfid_post save arduino error', e)
+
     asyncio.create_task(state.broadcast({'type': 'rfid', 'uid': uid, 'origen': origen, 'data': data}))
 
     return web.json_response({'ok': True, 'received': data, 'uid': uid, 'origen': origen})
@@ -233,6 +271,73 @@ async def breaker_set_handler(request):
         asyncio.create_task(state.broadcast({'type': 'ha', 'breaker_id': bid, 'result': svc_res['ha']}))
     asyncio.create_task(state.broadcast({'type': 'breakers:update', 'id': br['id'], 'state': state_req}))
     return web.json_response({'ok': True, 'id': br['id'], 'state': state_req})
+
+
+async def tarjeta_update_saldo(request):
+    """Actualizar saldo de una tarjeta: POST /tarjetas/{id}/saldo { saldo: 12.34 }
+
+    Se persiste en data.json y se hace broadcast de la tarjeta actualizada.
+    """
+    tid = request.match_info.get('id')
+    try:
+        body = await request.json()
+    except Exception:
+        body = dict(await request.post())
+    if 'saldo' not in body:
+        return web.json_response({'ok': False, 'error': 'missing saldo'}, status=400)
+    try:
+        models = load_models()
+        tarjetas = models.get('tarjetas', [])
+        t = next((x for x in tarjetas if x.get('id') == tid), None)
+        if t is None:
+            return web.json_response({'ok': False, 'error': 'unknown tarjeta'}, status=404)
+        # intentar convertir a numero si viene como string
+        try:
+            nuevo = body.get('saldo')
+            if isinstance(nuevo, str):
+                if nuevo.strip() == '':
+                    nuevo = None
+                else:
+                    nuevo = float(nuevo)
+        except Exception:
+            nuevo = body.get('saldo')
+        t['saldo'] = nuevo
+        # además de actualizar la tarjeta actualizar los breakers que referencien esta tarjeta
+        try:
+            for b in models.get('breakers', []):
+                if b.get('tarjeta') == tid:
+                    # si el saldo nuevo es numérico asignarlo a breaker.saldo y max_saldo
+                    if isinstance(nuevo, (int, float)):
+                        b['saldo'] = nuevo
+                        b['max_saldo'] = nuevo
+                    else:
+                        # si viene None o string vacío eliminar campo saldo del breaker
+                        b.pop('saldo', None)
+                        b.pop('max_saldo', None)
+        except Exception as e:
+            print('tarjeta_update_saldo update breakers error', e)
+        saved = save_models(models)
+        if saved:
+            # notificar a clientes con la tarjeta actualizada
+            asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': tid, 'tarjeta': t}))
+            # notificar updates en breakers asociados para refresco inmediato
+            try:
+                for b in models.get('breakers', []):
+                    if b.get('tarjeta') == tid:
+                        asyncio.create_task(state.broadcast({'type': 'breakers:update', 'id': b.get('id'), 'state': 'on' if b.get('estado') else 'off'}))
+                        # también enviar consumo parcial si existe saldo/power
+                        m = {k: v for k, v in b.items() if k in ('power', 'energy', 'voltage', 'current', 'saldo') and v is not None}
+                        if m:
+                            m.update({'type': 'breakers:consumption', 'id': b.get('id')})
+                            asyncio.create_task(state.broadcast(m))
+            except Exception:
+                pass
+            return web.json_response({'ok': True, 'tarjeta': t})
+        else:
+            return web.json_response({'ok': False, 'error': 'save failed'}, status=500)
+    except Exception as e:
+        print('tarjeta_update_saldo error', e)
+        return web.json_response({'ok': False, 'error': 'internal error'}, status=500)
 
 
 async def breaker_pulse_handler(request):
@@ -344,8 +449,44 @@ async def ha_listener():
                                 if entity_id in ids:
                                     matched.append(b)
                             if not matched:
-                                # debug de entidades no mapeadas
-                                print(f"[ha_listener] entidad sin breaker: {entity_id}")
+                                # intentar heurística difusa: tokenizar entity_id y buscar correspondencia
+                                try:
+                                    pretty = {'entity_id': entity_id, 'state': st, 'attributes': attrs}
+                                    print(f"[ha_listener] entidad sin breaker: {entity_id} -> {json.dumps(pretty, ensure_ascii=False)}")
+                                except Exception:
+                                    print(f"[ha_listener] entidad sin breaker: {entity_id}")
+                                # fuzzy match: tomar la parte sin dominio y tokens
+                                try:
+                                    short = entity_id.split('.',1)[1] if '.' in entity_id else entity_id
+                                    tokens = re.split('[._\-]', short.lower())
+                                    def token_score(b):
+                                        score = 0
+                                        # nombre e id del breaker
+                                        if b.get('id') and any(t in (b.get('id') or '').lower() for t in tokens):
+                                            score += 2
+                                        if b.get('nombre') and any(t in (b.get('nombre') or '').lower() for t in tokens):
+                                            score += 2
+                                        # entidades configuradas
+                                        for key in ('entity_id','power_entity','energy_entity','voltage_entity','current_entity'):
+                                            val = b.get(key)
+                                            if isinstance(val, str) and any(t in val.lower() for t in tokens):
+                                                score += 3
+                                        # tarjeta id
+                                        if b.get('tarjeta') and any(t in (b.get('tarjeta') or '').lower() for t in tokens):
+                                            score += 1
+                                        return score
+                                    best = None
+                                    best_score = 0
+                                    for b in breakers:
+                                        s = token_score(b)
+                                        if s > best_score:
+                                            best_score = s
+                                            best = b
+                                    if best and best_score >= 3:
+                                        matched = [best]
+                                        print(f"[ha_listener] fuzzy match: {entity_id} -> breaker {best.get('id')} (score={best_score})")
+                                except Exception:
+                                    pass
                             for b in matched:
                                 # actualizar estado solo si la entidad es principal o un switch
                                 domain = entity_id.split('.',1)[0] if '.' in entity_id else ''
@@ -355,20 +496,30 @@ async def ha_listener():
                                         set_breaker_state(DATA_PATH, b.get('id'), new_state_bool)
                                         asyncio.create_task(state.broadcast({'type':'breakers:update','id': b.get('id'),'state': 'on' if new_state_bool else 'off'}))
                                 # métricas
-                                # Si la entidad actual coincide con una entidad específica de métrica usar su state directo si es numérico
+                                # reutilizar extractor numeric
                                 def extract_numeric(val):
                                     try:
                                         if val is None:
                                             return None
-                                        if isinstance(val, (int,float)):
+                                        if isinstance(val, (int, float)):
                                             return val
                                         return float(str(val))
                                     except Exception:
                                         return None
-                                power = None
-                                energy = None
-                                voltage = None
-                                current = None
+
+                                # detectar sufijos de métricas, incluyendo phase_a_*
+                                metric_suffixes = {
+                                    'power': ['power_entity', 'power', 'power_w', 'current_power_w'],
+                                    'energy': ['energy_entity', 'energy', 'today_energy_kwh', 'energy_kwh'],
+                                    'voltage': ['voltage_entity', 'voltage', 'voltage_v'],
+                                    'current': ['current_entity', 'current', 'current_a'],
+                                }
+
+                                # añadimos heurísticas para phase_a_* que pueden venir como sensor.nombre_phase_a_current etc.
+                                # si la entidad_id contiene 'phase_a' o endswith relevant suffixes intentamos mapearlo.
+                                power = energy = voltage = current = None
+
+                                # si el entity_id corresponde exactamente con alguna entidad configurada explícitamente
                                 if entity_id == b.get('power_entity'):
                                     power = extract_numeric(st)
                                 if entity_id == b.get('energy_entity'):
@@ -377,7 +528,24 @@ async def ha_listener():
                                     voltage = extract_numeric(st)
                                 if entity_id == b.get('current_entity'):
                                     current = extract_numeric(st)
-                                # Si alguna métrica sigue None tomarla de atributos genéricos
+
+                                # si no hay coincidencia directa, intentar heurísticas con sufijos incluyendo phase_a
+                                # ejemplo: sensor.agustin_phase_a_current -> mapear a current
+                                try:
+                                    lower_eid = entity_id.lower() if isinstance(entity_id, str) else ''
+                                    if 'phase_a' in lower_eid:
+                                        if lower_eid.endswith('_current') or '_current' in lower_eid:
+                                            current = extract_numeric(st) if current is None else current
+                                        if lower_eid.endswith('_voltage') or '_voltage' in lower_eid:
+                                            voltage = extract_numeric(st) if voltage is None else voltage
+                                        if lower_eid.endswith('_power') or '_power' in lower_eid:
+                                            power = extract_numeric(st) if power is None else power
+                                        if lower_eid.endswith('_energy') or '_energy' in lower_eid:
+                                            energy = extract_numeric(st) if energy is None else energy
+                                except Exception:
+                                    pass
+
+                                # Caer a atributos genéricos si aún no tenemos valores
                                 if power is None:
                                     power = extract_numeric(attrs.get('power') or attrs.get('current_power_w') or attrs.get('power_w'))
                                 if energy is None:
@@ -386,6 +554,7 @@ async def ha_listener():
                                     voltage = extract_numeric(attrs.get('voltage') or attrs.get('voltage_v'))
                                 if current is None:
                                     current = extract_numeric(attrs.get('current') or attrs.get('current_a'))
+
                                 fields = {}
                                 if power is not None:
                                     fields['power'] = power
@@ -414,6 +583,8 @@ def make_app():
     app.router.add_post('/breakers/{id}/set', breaker_set_handler)
     app.router.add_post('/breakers/{id}/pulse', breaker_pulse_handler)
     app.router.add_get('/breakers/consumption', breakers_consumption_handler)
+    # Exponer endpoint para actualizar saldo de tarjetas desde la UI
+    app.router.add_post('/tarjetas/{id}/saldo', tarjeta_update_saldo)
     # static
     static_dir = os.path.join(BASE_DIR, 'static')
     app.router.add_static('/static/', static_dir, show_index=True)
@@ -437,6 +608,28 @@ def make_app():
     async def _init_models(app):
         init_models_startup()
         app['watcher_task'] = asyncio.create_task(watch_data_file(app))
+
+    # inicio del consumption manager (deducción por segundo)
+    try:
+        from .consumption_manager import create_manager
+    except Exception:
+        try:
+            from scripts.consumption_manager import create_manager
+        except Exception:
+            create_manager = None
+
+    if create_manager:
+        async def _start_consumption(app):
+            app['cons_mgr'] = create_manager(DATA_PATH)
+            app['cons_mgr'].start()
+
+        async def _stop_consumption(app):
+            mgr = app.get('cons_mgr')
+            if mgr:
+                await mgr.stop()
+
+        app.on_startup.append(_start_consumption)
+        app.on_cleanup.append(_stop_consumption)
 
     async def _cleanup_models(app):
         t = app.get('watcher_task')
