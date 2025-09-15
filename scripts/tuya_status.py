@@ -9,7 +9,7 @@ import websockets
 # ----------------------------
 HA_URL = os.getenv("HA_URL", "http://localhost:8123")  # Cambia a http://<tu-ip>:8123 si corres desde otra máquina
 HA_WS  = os.getenv("HA_WS",  HA_URL.replace("http", "ws") + "/api/websocket")
-HA_TOKEN = os.getenv("HA_TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjZmIxZDYyNmVlODc0MjY2OTJhYjMwZmUxYmI0YTBhMiIsImlhdCI6MTc1NTY0MjU4OSwiZXhwIjoyMDcxMDAyNTg5fQ.v7yQXhrD41Xuba57UMRmcLtGtO6fSfEZLUT1QQ0kPN4")
+HA_TOKEN = os.getenv("HA_TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI1YTFjMGEzNzk5ZmU0MGY2YjI0ZjhkODNmNTRlODZmYyIsImlhdCI6MTc1NzU0ODIyMCwiZXhwIjoyMDcyOTA4MjIwfQ._d9_MDDEpe8tN77uulJWyeaugcINgnoAndlcQYAZZg0")
 
 # ----------------------------
 # REST helpers (GET s  tes, call services)

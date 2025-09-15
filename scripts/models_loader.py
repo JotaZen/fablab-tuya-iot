@@ -64,3 +64,21 @@ def get_tarjeta_for_breaker(path: str, breaker: Dict[str, Any]) -> Optional[Dict
         if t.get('id') == tarjeta_id:
             return t
     return None
+
+
+def update_breaker_fields(path: str, breaker_id: str, **fields) -> Optional[Dict[str, Any]]:
+    """Actualiza campos arbitrarios del breaker y persiste.
+
+    Devuelve el breaker actualizado o None si no existe.
+    """
+    data = load_data(path)
+    updated = None
+    for b in data.get('breakers', []):
+        if b.get('id') == breaker_id:
+            for k, v in fields.items():
+                b[k] = v
+            updated = b
+            break
+    if updated is not None:
+        save_data(path, data)
+    return updated

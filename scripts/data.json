@@ -1,15 +1,32 @@
 {
   "tarjetas": [
     {
-      "id": "D69335A4"
+      "id": "D69335A4",
+      "saldo": 12.0
     }
   ],
   "breakers": [
     {
       "id": "01K4GQ8964RSBY1793HWJBH7KN",
+      "tuya_id": "eb8e6e63110f3332dcipz1",
+      "entity_id": "switch.agustin_switch",
+      "nombre": "Agustin",
+      "estado": false,
+      "tarjeta": "D69335A4",
+      "energy_entity": "sensor.agustin_total_energy",
+      "energy": 0.38,
+      "saldo": 12.0,
+      "max_saldo": 12.0
+    },
+    {
+      "id": "eb98f189ead047b85816m3",
+      "tuya_id": "eb98f189ead047b85816m3",
+      "entity_id": "switch.liceo_5",
+      "nombre": "Liceo-5",
       "estado": true,
-      "entity_id": "switch.breaker_2_interruptor",
-      "tarjeta": "D69335A4"
+      "tarjeta": "D69335A4",
+      "saldo": 12.0,
+      "max_saldo": 12.0
     }
   ],
   "arduinos": [

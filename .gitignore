@@ -2,3 +2,5 @@ ha_config
 
 venv
 
+*/__pycache__/*
+*/config.py
