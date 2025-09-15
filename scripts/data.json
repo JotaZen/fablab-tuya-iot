@@ -2,36 +2,104 @@
   "tarjetas": [
     {
       "id": "D69335A4",
-      "saldo": 12.0
+      "saldo": 0.0
+    },
+    {
+      "id": "958710AD",
+      "saldo": 1223.403
     }
   ],
   "breakers": [
     {
       "id": "01K4GQ8964RSBY1793HWJBH7KN",
       "tuya_id": "eb8e6e63110f3332dcipz1",
-      "entity_id": "switch.agustin_switch",
+      "entity_id": "switch.agustin",
       "nombre": "Agustin",
       "estado": false,
       "tarjeta": "D69335A4",
-      "energy_entity": "sensor.agustin_total_energy",
-      "energy": 0.38,
-      "saldo": 12.0,
-      "max_saldo": 12.0
+      "energy": 0.53,
+      "energy_entity": "sensor.breaker_2_energia_total",
+      "current_entity": "sensor.liceo_5_corriente_de_la_fase_c",
+      "power_entity": "sensor.liceo_5_potencia_de_la_fase_c",
+      "voltage_entity": "sensor.breaker_2_tension_de_la_fase_a",
+      "voltage": 220.2,
+      "current": 0.143,
+      "power": 0.025,
+      "consumption_last_ws": 39.0,
+      "consumption_power_w": 39.0,
+      "entities": [
+        "sensor.breaker_2_corriente_de_la_fase_a",
+        "sensor.breaker_2_potencia_de_la_fase_a",
+        "sensor.breaker_2_corriente_de_la_fase_b",
+        "sensor.breaker_2_potencia_de_la_fase_b",
+        "select.wifi_breaker_comportamiento_de_encendido",
+        "switch.alargador_inteligente_interruptor",
+        "sensor.alargador_inteligente_corriente_de_la_fase_a",
+        "sensor.alargador_inteligente_potencia_de_la_fase_a",
+        "sensor.alargador_inteligente_corriente_de_la_fase_b",
+        "sensor.alargador_inteligente_potencia_de_la_fase_b",
+        "sensor.alargador_inteligente_corriente_de_la_fase_c",
+        "sensor.alargador_inteligente_potencia_de_la_fase_c",
+        "sensor.liceo_5_corriente_de_la_fase_a",
+        "sensor.liceo_5_potencia_de_la_fase_a",
+        "sensor.liceo_5_corriente_de_la_fase_b",
+        "sensor.liceo_5_potencia_de_la_fase_b"
+      ]
     },
     {
       "id": "eb98f189ead047b85816m3",
       "tuya_id": "eb98f189ead047b85816m3",
       "entity_id": "switch.liceo_5",
       "nombre": "Liceo-5",
-      "estado": true,
-      "tarjeta": "D69335A4",
-      "saldo": 12.0,
-      "max_saldo": 12.0
+      "estado": false,
+      "tarjeta": "958710AD",
+      "energy_entity": "sensor.liceo_5_energia_total",
+      "entities": [
+        "switch.wifi_breaker_interruptor_1"
+      ]
     }
   ],
   "arduinos": [
     {
-      "id": "esp32-1"
+      "id": "ESP8266_02",
+      "es_estacion_carga": false,
+      "w_por_segundo": 10,
+      "last": {
+        "id": "ESP8266_02",
+        "nfc": "D69335A4"
+      },
+      "charging": [
+        {
+          "uid": "D69335A4",
+          "started_ms": 1757902565431,
+          "wps": 10.0,
+          "last": {
+            "id": "ESP8266_02",
+            "nfc": "D69335A4",
+            "ts": 1757902568599
+          }
+        }
+      ]
+    },
+    {
+      "id": "ESP8266_01",
+      "es_estacion_carga": false,
+      "w_por_segundo": 1,
+      "last": {
+        "id": "ESP8266_01",
+        "nfc": "D69335A4"
+      }
+    },
+    {
+      "id": "ESP8266_03",
+      "es_estacion_carga": true,
+      "w_por_segundo": 10,
+      "last": {
+        "id": "ESP8266_03",
+        "nfc": "D69335A4",
+        "ts": 1757902562045
+      },
+      "charging": []
     }
   ]
 }

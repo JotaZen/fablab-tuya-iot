@@ -143,14 +143,26 @@
       async function fetchModels() {
         const res = await fetch("/models");
         const data = await res.json();
-        renderModels(data);
+        if (editingSaldoBid) {
+          // si se está editando, no re-renderizar; solo actualizar modelo en memoria y saldos visibles
+          currentModels = data;
+          (data.tarjetas||[]).forEach(t=>{
+            document.querySelectorAll('[data-tid-saldo="'+t.id+'"]').forEach(el=>{
+              el.textContent = (t.saldo===undefined||t.saldo===null)?'—':t.saldo;
+            });
+          });
+        } else {
+          renderModels(data);
+        }
       }
 
       function fieldOrDash(v) {
         return v === null || v === undefined || v === "" ? "—" : v;
       }
 
-      function renderModels(data) {
+    let editingSaldoBid = null;
+
+    function renderModels(data) {
   currentModels = data;
         const a = document.getElementById("arduinos");
         const b = document.getElementById("breakers");
@@ -160,11 +172,33 @@
         const arduinosWrap = document.createElement("div");
         arduinosWrap.className = "cards";
         (data.arduinos || []).forEach((ad) => {
+          const isCharge = !!ad.es_estacion_carga;
+          const wps = ad.w_por_segundo !== undefined ? ad.w_por_segundo : '—';
           const lastHtml = ad.last ? '<div class="muted small">Último:<pre style="font-size:12px">'+JSON.stringify(ad.last, null, 2)+'</pre></div>' : '<div class="muted small">Sin datos</div>';
+          let chargingHtml = '';
+          if(isCharge){
+            const sessions = Array.isArray(ad.charging) ? ad.charging : [];
+            if(sessions.length>0){
+              chargingHtml = '<div class="muted small">Cargando ('+sessions.length+'):</div>'+
+                '<ul class="small" style="margin:4px 0 6px 16px; padding:0; list-style:disc">'+
+                sessions.map(s=>{
+                  const id = (s.uid||'').toString();
+                  const since = s.started_ms ? new Date(s.started_ms).toLocaleTimeString() : '—';
+                  const w = (s.wps!==undefined && s.wps!==null) ? s.wps : '—';
+                  return '<li><strong>'+id+'</strong> desde '+since+' @ '+w+' W/s</li>';
+                }).join('')+
+                '</ul>';
+            } else if(ad.last && (ad.last.nfc || ad.last.uid || ad.last.rfid)){
+              chargingHtml = '<div class="muted">Cargando NFC: <strong>' + (ad.last.nfc || ad.last.uid || ad.last.rfid) + '</strong></div>';
+            }
+          }
+          const badge = '<span class="badge ' + (isCharge ? 'on' : 'off') + '">' + (isCharge ? 'Estación de carga' : 'Lector') + '</span>';
           const body =
             '<div class="hdr"><div><strong>' +
             fieldOrDash(ad.id) +
-            '</strong><div class="muted small">Arduino</div></div><div class="muted small">&nbsp;</div></div>' +
+            '</strong><div class="muted small">Arduino</div></div><div>' + badge + '</div></div>' +
+            (isCharge ? ('<div class="muted small">W/s: <strong>' + fieldOrDash(wps) + '</strong></div>') : '') +
+            chargingHtml +
             "<div>" + lastHtml + "</div>";
           const card = document.createElement("div");
           card.className = "card";
@@ -187,6 +221,7 @@
           const energy = fieldOrDash(br.energy);
           const voltage = fieldOrDash(br.voltage);
           const current = fieldOrDash(br.current);
+          const lastCons = fieldOrDash(br.consumption_last_ws);
 
           const hdr =
             '<div class="hdr"><div><strong>Breaker ' +
@@ -206,6 +241,7 @@
               br.nombre +
               "</div><br/>" +
               '<div class="muted">Potencia: <strong>' + power + ' W</strong> &nbsp; Energía: <strong>' + energy + ' kWh</strong><br/>' +
+              'Consumo último 1s: <strong>' + lastCons + ' W·s</strong><br/>' +
               'Voltaje: <strong>' + voltage + ' V</strong> &nbsp; Corriente: <strong>' + current + ' A</strong>' +
               "</div>" +
               '<div style="margin-top:8px">' +
@@ -265,6 +301,7 @@
         const target = ev.target;
         if(target.matches('.btn-edit-saldo')){
           const bid = target.getAttribute('data-bid');
+          editingSaldoBid = bid;
           // mostrar input inline
           const displaySpan = document.querySelector('[data-bid-saldo="'+bid+'"]');
           if(!displaySpan) return;
@@ -297,6 +334,7 @@
           if(editCont) editCont.innerHTML = '';
           if(displaySpan) { displaySpan.style.display = ''; }
           if(editBtn) { editBtn.style.display = ''; }
+          editingSaldoBid = null;
           fetchModels();
         } else if(target.matches('.btn-cancel-saldo')){
           const bid = target.getAttribute('data-bid-cancel');
@@ -306,6 +344,7 @@
           if(editCont) editCont.innerHTML = '';
           if(displaySpan) { displaySpan.style.display = ''; }
           if(editBtn) { editBtn.style.display = ''; }
+          editingSaldoBid = null;
         }
       });
        }
@@ -324,6 +363,7 @@
               if('energy' in obj) br.energy = obj.energy;
               if('voltage' in obj) br.voltage = obj.voltage;
               if('current' in obj) br.current = obj.current;
+              if('ws' in obj) br.consumption_last_ws = obj.ws;
               updateBreakerCard(br.id);
             }else{
               fetchModels();
@@ -331,14 +371,30 @@
         }
         // actualizar tarjetas y arduinos a partir de broadcasts
         if(obj && obj.type === 'tarjetas:update'){
-          const t = currentModels.tarjetas.find(x=>x.id===obj.id);
-          if(t){ Object.assign(t, obj.tarjeta); fetchModels(); }
-          else { fetchModels(); }
+          // actualizar modelo en memoria
+          let t = currentModels.tarjetas.find(x=>x.id===obj.id);
+          if(t){ Object.assign(t, obj.tarjeta); }
+          else {
+            (currentModels.tarjetas||[]).push(obj.tarjeta);
+          }
+          // actualizar DOM in-place para evitar cerrar editores
+          document.querySelectorAll('[data-tid-saldo="'+obj.id+'"]').forEach(el=>{
+            el.textContent = (obj.tarjeta && (obj.tarjeta.saldo!==undefined && obj.tarjeta.saldo!==null)) ? obj.tarjeta.saldo : '—';
+          });
         }
         if(obj && obj.type === 'arduinos:update'){
-          const ad = currentModels.arduinos.find(x=>x.id===obj.id);
-          if(ad){ ad.last = obj.last; fetchModels(); }
-          else { fetchModels(); }
+          const idx = (currentModels.arduinos||[]).findIndex(x=>x.id===obj.id);
+          if(idx>=0){ currentModels.arduinos[idx] = obj.arduino || Object.assign({}, currentModels.arduinos[idx], obj); }
+          fetchModels();
+        }
+        if(obj && obj.type === 'models' && obj.data){
+          // si estamos editando saldo, no re-renderizar para no cerrar el input
+          if(editingSaldoBid){
+            // solo actualizar el modelo en memoria
+            currentModels = obj.data;
+          } else {
+            renderModels(obj.data);
+          }
         }
       }
 
@@ -356,6 +412,7 @@
         const energy = fd(br.energy);
         const voltage = fd(br.voltage);
         const current = fd(br.current);
+        const lastCons = fd(br.consumption_last_ws);
         card.querySelector('.badge').className = 'badge '+(estado==='on'?'on':'off');
         card.querySelector('.badge').textContent = estado==='on'?'ON':'OFF';
         // Reemplazar bloque de métricas (buscar por texto 'Saldo:')
@@ -363,6 +420,7 @@
         card.innerHTML = card.innerHTML.replace(metricsRegex, () => {
           return '<div class="muted">Saldo: <strong>'+saldo+'</strong><br/>'+
             'Potencia: <strong>'+power+' W</strong> &nbsp; Energía: <strong>'+energy+' kWh</strong><br/>'+
+            'Consumo último 1s: <strong>'+lastCons+' W·s</strong><br/>'+
             'Voltaje: <strong>'+voltage+' V</strong> &nbsp; Corriente: <strong>'+current+' A</strong>'+
             '</div>';
         });
@@ -383,6 +441,60 @@
       // carga inicial y refresco periódico
       fetchModels();
       setInterval(fetchModels, 5000);
+      // Tick de consumo desde el frontend: cada segundo descuenta Ws de la tarjeta asociada
+      setInterval(async ()=>{
+        try{
+          if(!currentModels || !Array.isArray(currentModels.breakers)) return;
+          if(editingSaldoBid) return; // no operar durante edición manual
+          const elapsed = 1.0; // 1s
+          for(const br of (currentModels.breakers||[])){
+            if(!br || !br.estado) continue;
+            if(!br.tarjeta) continue;
+            let power = br.power;
+            const v = br.voltage, i = br.current;
+            // inferir potencia si falta
+            let inferred = null;
+            try{
+              if(v!=null && i!=null){ inferred = parseFloat(v)*parseFloat(i); }
+            }catch{}
+            try{
+              if(power==null || power===undefined){ power = inferred; }
+              else {
+                power = parseFloat(power);
+                if(!isFinite(power)) power = inferred;
+                else {
+                  if(inferred!=null && isFinite(inferred)){
+                    if(power < 10 && inferred > power*10){ power = power*1000.0; }
+                  } else {
+                    if(power < 10){ power = power*1000.0; }
+                  }
+                }
+              }
+            }catch{ power = inferred; }
+            if(power==null || !isFinite(power)){
+              continue; // no hay potencia para descontar
+            }
+            const ws = power * elapsed; // W·s
+            // aplicar ajuste negativo a la tarjeta
+            try{
+              await fetch('/tarjetas/'+encodeURIComponent(br.tarjeta)+'/ajuste', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({ delta: -ws })
+              });
+            }catch{}
+            // actualizar UI localmente para sensación de inmediatez
+            const t = (currentModels.tarjetas||[]).find(x=>x.id===br.tarjeta);
+            if(t && typeof t.saldo === 'number'){
+              t.saldo = Math.max(0, Math.round((t.saldo - ws)*1000000)/1000000);
+              document.querySelectorAll('[data-tid-saldo="'+br.tarjeta+'"]').forEach(el=>{
+                el.textContent = t.saldo;
+              });
+            }
+            br.consumption_last_ws = Math.round(ws*1000000)/1000000;
+            updateBreakerCard(br.id);
+          }
+        }catch(e){ /* silencioso */ }
+      }, 1000);
       ws.onopen = () => {
         logEvent({ type: "info", msg: "conectado ws" });
         logTuya({ type: "info", msg: "ws conectado" });

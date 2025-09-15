@@ -87,6 +87,13 @@ class Tarjeta:
         disponible = float(self.saldo)
         consumido = min(disponible, float(cantidad))
         self.saldo = round(disponible - consumido, 6)
+        # si se agotó, gatillar evento on_empty
+        try:
+            if self.saldo <= 0 and self.on_empty:
+                self.on_empty()
+        except Exception:
+            # no dejar que un callback rompa la lógica de consumo
+            pass
         return consumido
 
     def esta_vacia(self) -> bool:

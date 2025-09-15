@@ -1,49 +1,57 @@
 #!/usr/bin/env python3
-"""Servidor mínimo que expone únicamente el endpoint POST /rfid.
-
-Este módulo no importa modelos ni registry. Solo recibe JSON/form con al menos
-"uid" y opcionalmente "origen" y hace un log y devuelve el payload.
+"""Servidor web para UI y endpoints REST/WS.
+- GET / => UI estática
+- GET /models => modelos actuales
+- WS /ws => eventos push
+- POST /rfid => procesa lecturas (carga por estación y liquidación en lector)
+- Breakers: toggle/set/pulse y consumo
+- Tarjetas: actualizar saldo manual
 """
 import os
-import json
-import asyncio
-from aiohttp import web
-from typing import Set
-import aiohttp
-import websockets
 import re
+import json
+import time
+import asyncio
+from typing import Set
+
+from aiohttp import web
+import websockets
+
+# --------- Imports con fallbacks ---------
+try:
+    from .models_loader import (
+        get_models, get_breaker, toggle_breaker, set_breaker_state,
+        get_tarjeta_for_breaker, update_breaker_fields,
+        set_tarjeta_saldo, adjust_tarjeta_saldo
+    )
+except Exception:
+    try:
+        from scripts.models_loader import (
+            get_models, get_breaker, toggle_breaker, set_breaker_state,
+            get_tarjeta_for_breaker, update_breaker_fields,
+            set_tarjeta_saldo, adjust_tarjeta_saldo
+        )
+    except Exception:
+        from models_loader import (
+            get_models, get_breaker, toggle_breaker, set_breaker_state,
+            get_tarjeta_for_breaker, update_breaker_fields,
+            set_tarjeta_saldo, adjust_tarjeta_saldo
+        )
+
 try:
     from .breaker_service import set_breaker, toggle_breaker_service, pulse_breaker_service
 except Exception:
-    from breaker_service import set_breaker, toggle_breaker_service, pulse_breaker_service
-
-try:
-    # cuando se ejecuta como paquete
-    from .models_loader import get_models, get_breaker, toggle_breaker, set_breaker_state, get_tarjeta_for_breaker, update_breaker_fields
-except Exception:
     try:
-        # cuando se ejecuta como script desde la raíz del repo
-        from scripts.models_loader import get_models, get_breaker, toggle_breaker, set_breaker_state, get_tarjeta_for_breaker, update_breaker_fields
+        from breaker_service import set_breaker, toggle_breaker_service, pulse_breaker_service
     except Exception:
-        # fallback: import directo si el script está en PYTHONPATH
-        from models_loader import get_models, get_breaker, toggle_breaker, set_breaker_state, get_tarjeta_for_breaker, update_breaker_fields
-# import tuya client separately (not nested inside models import) with fallbacks
-try:
-    from .tuya_client import perform_action as tuya_perform, perform_pulse as tuya_perform_pulse
-except Exception:
-    try:
-        from scripts.tuya_client import perform_action as tuya_perform, perform_pulse as tuya_perform_pulse
-    except Exception:
-        try:
-            from tuya_client import perform_action as tuya_perform, perform_pulse as tuya_perform_pulse
-        except Exception:
-            # safe fallback so server doesn't crash if tuya_client missing
-            def tuya_perform(device_id: str, action: str):
-                return False, 'tuya_client not available'
-            def tuya_perform_pulse(device_id: str, duration_ms: int = 500):
-                return False, 'tuya_client not available'
+        async def toggle_breaker_service(*args, **kwargs):
+            return {'ok': False, 'error': 'breaker_service unavailable'}
+        async def set_breaker(*args, **kwargs):
+            return {'ok': False, 'error': 'breaker_service unavailable'}
+        async def pulse_breaker_service(*args, **kwargs):
+            return {'ok': False, 'error': 'breaker_service unavailable'}
 
-# NUEVO: cargar config central
+# Config HA
 try:
     from .config import HA_URL as CFG_HA_URL, HA_TOKEN as CFG_HA_TOKEN
 except Exception:
@@ -56,26 +64,24 @@ except Exception:
 API_KEY = os.environ.get('API_KEY')
 BASE_DIR = os.path.dirname(__file__)
 DATA_PATH = os.path.join(BASE_DIR, 'data.json')
-
-# Usar config central (eliminar token hardcodeado aquí)
 HA_URL = CFG_HA_URL
 HA_TOKEN = CFG_HA_TOKEN
-HA_WS  = os.getenv('HA_WS') or (HA_URL.replace('http','ws') + '/api/websocket')
+HA_WS = os.getenv('HA_WS') or (HA_URL.replace('http', 'ws') + '/api/websocket')
 
-
+# --------- Estado y utilidades ---------
 class ServerState:
     def __init__(self):
         self.websockets: Set[web.WebSocketResponse] = set()
 
     async def broadcast(self, message: dict):
-        text = json.dumps(message, ensure_ascii=False)
-        to_remove = []
+        txt = json.dumps(message, ensure_ascii=False)
+        stale = []
         for ws in list(self.websockets):
             try:
-                await ws.send_str(text)
+                await ws.send_str(txt)
             except Exception:
-                to_remove.append(ws)
-        for ws in to_remove:
+                stale.append(ws)
+        for ws in stale:
             self.websockets.discard(ws)
 
 
@@ -93,6 +99,14 @@ def load_models():
 def save_models(models: dict):
     """Persistir models en DATA_PATH atomically."""
     try:
+        # antes de persistir, eliminar campos de saldo en breakers para que
+        # la fuente de verdad del saldo siga siendo `tarjetas`.
+        try:
+            for bb in models.get('breakers', []):
+                bb.pop('saldo', None)
+                bb.pop('max_saldo', None)
+        except Exception:
+            pass
         tmp = DATA_PATH + '.tmp'
         with open(tmp, 'w', encoding='utf8') as f:
             json.dump(models, f, ensure_ascii=False, indent=2)
@@ -116,26 +130,37 @@ def init_models_startup():
 
 
 async def watch_data_file(app):
-    """Vigila cambios de mtime en data.json y broadcast de modelos actualizados."""
+    # snapshot previo para diffs de tarjetas
+    prev = None
     try:
-        last_mtime = os.path.getmtime(DATA_PATH)
+        prev = load_models()
     except Exception:
-        last_mtime = None
-    print(f"[watcher] iniciado para {DATA_PATH}")
+        prev = None
     while True:
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
+        # cargar siempre: en Windows la resolución de mtime puede ser gruesa y perder cambios rápidos
         try:
-            mtime = os.path.getmtime(DATA_PATH)
+            models = load_models()
         except Exception:
             continue
-        if last_mtime is None:
-            last_mtime = mtime
-            continue
-        if mtime != last_mtime:
-            last_mtime = mtime
-            models = load_models()
-            print(f"[watcher] cambio detectado en data.json -> broadcast models")
-            await state.broadcast({'type': 'models', 'data': models})
+        # diffs de tarjetas (saldo)
+        try:
+            prev_t = {t.get('id'): t for t in (prev.get('tarjetas', []) if prev else [])}
+            cur_t = {t.get('id'): t for t in models.get('tarjetas', [])}
+            for tid, cur in cur_t.items():
+                pv = prev_t.get(tid)
+                if pv is None:
+                    continue
+                try:
+                    if float(cur.get('saldo') or 0.0) != float(pv.get('saldo') or 0.0):
+                        asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': tid, 'tarjeta': cur}))
+                except Exception:
+                    pass
+            prev = models
+        except Exception:
+            prev = models
+        # broadcast completo del modelo
+        await state.broadcast({'type': 'models', 'data': models})
 
 
 async def index(request):
@@ -151,15 +176,10 @@ async def websocket_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     state.websockets.add(ws)
-
-    # enviar modelos actuales al cliente
-    models = load_models()
-    await ws.send_str(json.dumps({"type": "models", "data": models}, ensure_ascii=False))
-    await ws.send_str(json.dumps({"type": "info", "msg": "cliente conectado"}, ensure_ascii=False))
-
+    await ws.send_str(json.dumps({'type': 'models', 'data': load_models()}, ensure_ascii=False))
+    await ws.send_str(json.dumps({'type': 'info', 'msg': 'cliente conectado'}, ensure_ascii=False))
     try:
-        async for msg in ws:
-            # ignoramos mensajes del cliente por ahora
+        async for _ in ws:
             pass
     finally:
         state.websockets.discard(ws)
@@ -178,36 +198,162 @@ async def rfid_post(request):
         data = await request.post()
         data = dict(data)
 
-    uid = data.get('uid') or data.get('rfid')
-    origen = data.get('origen') or data.get('arduino') or data.get('arduino_id')
+    # aceptar diferentes nombres desde distintos arduinos/firmwares
+    uid = data.get('uid') or data.get('rfid') or data.get('nfc') or data.get('card') or data.get('tag')
+    origen = data.get('origen') or data.get('arduino') or data.get('arduino_id') or data.get('id')
 
     # log completo
     print('RFID received:', json.dumps(data, ensure_ascii=False))
 
-    # broadcast a websockets
     # guardar ultimo dato en el arduino si existe
+    matched = None
     if origen:
         try:
             models = load_models()
             arduinos = models.get('arduinos', [])
-            matched = None
             for ad in arduinos:
                 if ad.get('id') == origen:
                     matched = ad
                     break
             if matched is None:
-                # intentar encontrar por campo 'arduino' en payload
                 for ad in arduinos:
                     if ad.get('id') == data.get('arduino'):
                         matched = ad
                         break
             if matched is not None:
-                matched['last'] = data
-                # persistir y notificar cambio
-                if save_models(models):
-                    asyncio.create_task(state.broadcast({'type': 'arduinos:update', 'id': matched['id'], 'last': matched['last']}))
+                if bool(matched.get('es_estacion_carga')):
+                    # Estación de carga: actualizar 'charging' (lista de sesiones) y 'last'
+                    now_ms = int(time.time() * 1000)
+                    payload = dict(data)
+                    payload.setdefault('ts', now_ms)
+                    matched['last'] = payload
+                    uid_seen = payload.get('uid') or payload.get('rfid') or payload.get('nfc')
+                    # inicializar lista de sesiones si no existe
+                    charging = matched.get('charging')
+                    if not isinstance(charging, list):
+                        charging = []
+                        matched['charging'] = charging
+                    if uid_seen:
+                        # buscar sesión existente por UID
+                        sess = None
+                        for s in charging:
+                            if s.get('uid') == uid_seen:
+                                sess = s
+                                break
+                        if sess is None:
+                            # crear nueva sesión
+                            try:
+                                wps = float(matched.get('w_por_segundo') or 0.0)
+                            except Exception:
+                                wps = 0.0
+                            sess = {
+                                'uid': uid_seen,
+                                'started_ms': int(payload.get('ts') or payload.get('timestamp') or now_ms),
+                                'wps': wps,
+                                'last': payload,
+                            }
+                            charging.append(sess)
+                        else:
+                            # actualizar última lectura, no pisar started_ms si ya existe
+                            sess['last'] = payload
+                            if not sess.get('started_ms'):
+                                sess['started_ms'] = int(payload.get('ts') or payload.get('timestamp') or now_ms)
+                            if 'wps' not in sess or sess.get('wps') in (None, 0, 0.0):
+                                try:
+                                    sess['wps'] = float(matched.get('w_por_segundo') or 0.0)
+                                except Exception:
+                                    sess['wps'] = 0.0
+                    if save_models(models):
+                        asyncio.create_task(state.broadcast({'type': 'arduinos:update', 'id': matched.get('id'), 'arduino': matched}))
+                else:
+                    # Lector normal: liquidar carga si existe en cualquier estación
+                    uid_seen = data.get('uid') or data.get('rfid') or data.get('nfc')
+                    if uid_seen:
+                        total = 0.0
+                        now_ms = int(time.time() * 1000)
+                        for ad in arduinos:
+                            try:
+                                if not bool(ad.get('es_estacion_carga')):
+                                    continue
+                                # Liquidar sesiones en lista 'charging' que coincidan con uid
+                                charging = ad.get('charging') if isinstance(ad.get('charging'), list) else []
+                                remaining = []
+                                for s in charging:
+                                    try:
+                                        if s.get('uid') != uid_seen:
+                                            remaining.append(s)
+                                            continue
+                                        wps = float(s.get('wps') if s.get('wps') is not None else (ad.get('w_por_segundo') or 0.0))
+                                        started = int(s.get('started_ms') or now_ms)
+                                        elapsed_ms = max(0, now_ms - started)
+                                        total += wps * (elapsed_ms / 1000.0)
+                                    except Exception:
+                                        # si hay problema, no sumar y descartar sesión para evitar loops
+                                        pass
+                                if remaining or ('charging' in ad):
+                                    ad['charging'] = remaining
+                                # fallback adicional por 'last' si no había sesión (retrocompatibilidad)
+                                if not charging:
+                                    last = ad.get('last') or {}
+                                    nfc = last.get('nfc') or last.get('uid') or last.get('rfid')
+                                    if nfc == uid_seen:
+                                        try:
+                                            ts = int(last.get('ts') or last.get('timestamp') or (now_ms - 1000))
+                                        except Exception:
+                                            ts = now_ms - 1000
+                                        elapsed_ms = max(0, now_ms - ts)
+                                        try:
+                                            wps_fb = float(ad.get('w_por_segundo') or 0.0)
+                                        except Exception:
+                                            wps_fb = 0.0
+                                        total += wps_fb * (elapsed_ms / 1000.0)
+                                        ad['last'] = None
+                            except Exception:
+                                continue
+                        if total > 0:
+                            tarjetas = models.get('tarjetas', [])
+                            t = next((t for t in tarjetas if t.get('id') == uid_seen), None)
+                            if t is not None:
+                                try:
+                                    current = float(t.get('saldo') or 0.0)
+                                except Exception:
+                                    current = 0.0
+                                t['saldo'] = round(current + total, 6)
+                                asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': uid_seen, 'tarjeta': t}))
+                        if save_models(models):
+                            for ad in arduinos:
+                                if bool(ad.get('es_estacion_carga')):
+                                    asyncio.create_task(state.broadcast({'type': 'arduinos:update', 'id': ad.get('id'), 'arduino': ad}))
+                    matched['last'] = data
+                    save_models(models)
         except Exception as e:
             print('rfid_post save arduino error', e)
+
+    # asociar lectura con tarjeta si se detectó uid (soporta campo 'nfc' enviado por Arduino)
+    if uid:
+        try:
+            models = load_models()
+            tarjetas = models.get('tarjetas', [])
+            tarjeta = next((t for t in tarjetas if t.get('id') == uid), None)
+            if tarjeta:
+                # notificar escaneo de tarjeta
+                asyncio.create_task(state.broadcast({'type': 'tarjetas:scanned', 'tarjeta': tarjeta, 'origen': origen, 'arduino_last': matched.get('last') if matched else None}))
+                # controlar breakers asociados: si la tarjeta tiene saldo > 0 encender, si no apagar
+                try:
+                    for b in models.get('breakers', []):
+                        if b.get('tarjeta') == tarjeta.get('id'):
+                            desired = float(tarjeta.get('saldo') or 0.0) > 0.0
+                            if bool(b.get('estado')) != desired:
+                                # set_breaker_state persistirá y realizará acciones externas
+                                try:
+                                    set_breaker_state(DATA_PATH, b.get('id'), desired)
+                                except Exception:
+                                    print('rfid_post: set_breaker_state error')
+                                asyncio.create_task(state.broadcast({'type': 'breakers:update', 'id': b.get('id'), 'state': 'on' if desired else 'off'}))
+                except Exception as e:
+                    print('rfid_post set_breaker error', e)
+        except Exception as e:
+            print('rfid_post tarjeta association error', e)
 
     asyncio.create_task(state.broadcast({'type': 'rfid', 'uid': uid, 'origen': origen, 'data': data}))
 
@@ -286,57 +432,90 @@ async def tarjeta_update_saldo(request):
     if 'saldo' not in body:
         return web.json_response({'ok': False, 'error': 'missing saldo'}, status=400)
     try:
-        models = load_models()
-        tarjetas = models.get('tarjetas', [])
-        t = next((x for x in tarjetas if x.get('id') == tid), None)
+        val = body.get('saldo')
+        if isinstance(val, str):
+            val = val.strip().replace(',', '.')
+        try:
+            val = float(val)
+        except Exception:
+            return web.json_response({'ok': False, 'error': 'invalid saldo'}, status=400)
+
+        t = set_tarjeta_saldo(DATA_PATH, tid, val)
         if t is None:
             return web.json_response({'ok': False, 'error': 'unknown tarjeta'}, status=404)
-        # intentar convertir a numero si viene como string
+
+        # broadcast de la tarjeta y de breakers asociados (su estado pudo cambiar)
+        asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': t.get('id'), 'tarjeta': t}))
         try:
-            nuevo = body.get('saldo')
-            if isinstance(nuevo, str):
-                if nuevo.strip() == '':
-                    nuevo = None
-                else:
-                    nuevo = float(nuevo)
-        except Exception:
-            nuevo = body.get('saldo')
-        t['saldo'] = nuevo
-        # además de actualizar la tarjeta actualizar los breakers que referencien esta tarjeta
-        try:
+            models = load_models()
             for b in models.get('breakers', []):
-                if b.get('tarjeta') == tid:
-                    # si el saldo nuevo es numérico asignarlo a breaker.saldo y max_saldo
-                    if isinstance(nuevo, (int, float)):
-                        b['saldo'] = nuevo
-                        b['max_saldo'] = nuevo
-                    else:
-                        # si viene None o string vacío eliminar campo saldo del breaker
-                        b.pop('saldo', None)
-                        b.pop('max_saldo', None)
-        except Exception as e:
-            print('tarjeta_update_saldo update breakers error', e)
-        saved = save_models(models)
-        if saved:
-            # notificar a clientes con la tarjeta actualizada
-            asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': tid, 'tarjeta': t}))
-            # notificar updates en breakers asociados para refresco inmediato
-            try:
-                for b in models.get('breakers', []):
-                    if b.get('tarjeta') == tid:
-                        asyncio.create_task(state.broadcast({'type': 'breakers:update', 'id': b.get('id'), 'state': 'on' if b.get('estado') else 'off'}))
-                        # también enviar consumo parcial si existe saldo/power
-                        m = {k: v for k, v in b.items() if k in ('power', 'energy', 'voltage', 'current', 'saldo') and v is not None}
-                        if m:
-                            m.update({'type': 'breakers:consumption', 'id': b.get('id')})
-                            asyncio.create_task(state.broadcast(m))
-            except Exception:
-                pass
-            return web.json_response({'ok': True, 'tarjeta': t})
-        else:
-            return web.json_response({'ok': False, 'error': 'save failed'}, status=500)
+                if b.get('tarjeta') == t.get('id'):
+                    asyncio.create_task(state.broadcast({'type': 'breakers:update', 'id': b.get('id'), 'state': 'on' if b.get('estado') else 'off'}))
+        except Exception:
+            pass
+
+        return web.json_response({'ok': True, 'tarjeta': t})
     except Exception as e:
         print('tarjeta_update_saldo error', e)
+        return web.json_response({'ok': False, 'error': 'internal error'}, status=500)
+
+
+async def tarjeta_adjust_saldo(request):
+    """Ajusta el saldo de una tarjeta sumando un delta (puede ser negativo).
+
+    POST /tarjetas/{id}/ajuste { delta: -12.34 }
+    - Persiste en data.json usando adjust_tarjeta_saldo
+    - Broadcast tarjetas:update y breakers:update para asociados
+    - Si el saldo llega a 0, intenta apagar físicamente los breakers asociados
+    """
+    tid = request.match_info.get('id')
+    try:
+        body = await request.json()
+    except Exception:
+        body = dict(await request.post())
+    if 'delta' not in body:
+        return web.json_response({'ok': False, 'error': 'missing delta'}, status=400)
+    try:
+        delta = body.get('delta')
+        if isinstance(delta, str):
+            delta = delta.strip().replace(',', '.')
+        delta = float(delta)
+    except Exception:
+        return web.json_response({'ok': False, 'error': 'invalid delta'}, status=400)
+
+    try:
+        t = adjust_tarjeta_saldo(DATA_PATH, tid, delta)
+        if t is None:
+            return web.json_response({'ok': False, 'error': 'unknown tarjeta'}, status=404)
+
+        # broadcast tarjeta actualizada
+        asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': t.get('id'), 'tarjeta': t}))
+
+        # revisar breakers asociados para notificar y apagar físicamente si corresponde
+        try:
+            models = load_models()
+            for b in models.get('breakers', []):
+                if b.get('tarjeta') == t.get('id'):
+                    # notificar estado actual
+                    asyncio.create_task(state.broadcast({'type': 'breakers:update', 'id': b.get('id'), 'state': 'on' if b.get('estado') else 'off'}))
+                    # si saldo 0 y está ON, intentar apagado físico vía servicio
+                    try:
+                        saldo_val = float(t.get('saldo') or 0.0)
+                    except Exception:
+                        saldo_val = 0.0
+                    if saldo_val <= 0.0 and bool(b.get('estado')):
+                        try:
+                            svc_res = await set_breaker(DATA_PATH, b.get('id'), False)
+                            if svc_res.get('ok'):
+                                asyncio.create_task(state.broadcast({'type': 'breakers:update', 'id': b.get('id'), 'state': 'off', 'reason': 'saldo=0'}))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        return web.json_response({'ok': True, 'tarjeta': t})
+    except Exception as e:
+        print('tarjeta_adjust_saldo error', e)
         return web.json_response({'ok': False, 'error': 'internal error'}, status=500)
 
 
@@ -350,79 +529,85 @@ async def breaker_pulse_handler(request):
     svc_res = await pulse_breaker_service(DATA_PATH, bid, 500)
     if not svc_res.get('ok'):
         return web.json_response({'ok': False, 'error': svc_res.get('error')}, status=404)
+
+    # broadcast resultados
     if svc_res.get('tuya') is not None:
         t = dict(svc_res.get('tuya', {}))
         if 'ok' in t:
             t['success'] = t.pop('ok')
-        # pulse action name
-        if 'action' not in t:
-            t['action'] = 'pulse'
-        payload = {'type': 'tuya:pulse', 'breaker_id': bid, **t}
-        # include device identifier for UI
+        t['action'] = t.get('action') or 'pulse'
+        payload = {'type': 'tuya', 'breaker_id': bid, **t}
         if device_id:
             payload['device'] = device_id
         asyncio.create_task(state.broadcast(payload))
-    return web.json_response({'ok': True, 'breaker_id': bid, 'tuya': svc_res.get('tuya')})
+    if svc_res.get('ha') is not None:
+        asyncio.create_task(state.broadcast({'type': 'ha', 'breaker_id': bid, 'result': svc_res['ha']}))
 
+    return web.json_response({'ok': True, 'id': br.get('id'), 'pulse': True})
 
 async def breakers_consumption_handler(request):
-    """Devuelve métricas actuales de consumo de todos los breakers.
-
-    Respuesta: { ok: true, breakers: [ {id, estado, power, energy, voltage, current} ] }
-    """
+    """Devuelve métricas básicas de consumo de todos los breakers."""
     models = load_models()
     out = []
     for b in models.get('breakers', []):
         entry = {
             'id': b.get('id'),
-            'estado': b.get('estado'),
+            'estado': bool(b.get('estado')),
             'power': b.get('power'),
             'energy': b.get('energy'),
             'voltage': b.get('voltage'),
             'current': b.get('current'),
         }
         out.append(entry)
-        print(f"[consumption] breaker={entry['id']} estado={entry['estado']} power={entry['power']}W energy={entry['energy']}kWh voltage={entry['voltage']}V current={entry['current']}A")
     return web.json_response({'ok': True, 'breakers': out})
 
 
-async def ha_listener():
-    """Conecta al websocket de Home Assistant y re-broadcast eventos state_changed."""
+async def ha_listener_forever():
+    """Mantiene conexión WS con HA con reconexión automática y reenvía state_changed.
+
+    Emite además eventos 'ha:status' con estados 'connected'/'disconnected'.
+    """
     if not (HA_WS and HA_TOKEN):
         return
-    try:
-        async with websockets.connect(HA_WS) as ws:
-            # handshake
-            hello = json.loads(await ws.recv())
-            if hello.get('type') != 'auth_required':
-                print('HA WS unexpected hello', hello)
-                return
-            await ws.send(json.dumps({'type':'auth', 'access_token': HA_TOKEN}))
-            resp = json.loads(await ws.recv())
-            if resp.get('type') != 'auth_ok':
-                print('HA WS auth failed', resp)
-                return
-            # subscribe
-            msg = {'id': 1, 'type': 'subscribe_events', 'event_type': 'state_changed'}
-            await ws.send(json.dumps(msg))
-            ack = json.loads(await ws.recv())
-            if not ack.get('success'):
-                print('HA WS subscribe failed', ack)
-                return
-            print('HA listener connected')
-            async for raw in ws:
-                try:
-                    evt = json.loads(raw)
-                except Exception:
-                    continue
-                if evt.get('type') == 'event' and evt.get('event', {}).get('event_type') == 'state_changed':
-                    data = evt['event']['data']
-                    entity_id = data.get('entity_id')
-                    new_state = data.get('new_state')
-                    # forward raw HA event to clients
-                    asyncio.create_task(state.broadcast({'type':'ha:state_changed','entity_id':entity_id,'new_state':new_state}))
-                    # if the new state corresponds to a breaker entity, update local models and notify clients
+    backoff = 3
+    while True:
+        try:
+            async with websockets.connect(HA_WS, ping_interval=20, ping_timeout=20, max_queue=1000) as ws:
+                # handshake
+                hello = json.loads(await ws.recv())
+                if hello.get('type') != 'auth_required':
+                    print('HA WS unexpected hello', hello)
+                    await state.broadcast({'type': 'ha:status', 'status': 'disconnected', 'reason': 'unexpected_hello'})
+                    raise RuntimeError('unexpected hello from HA')
+                await ws.send(json.dumps({'type':'auth', 'access_token': HA_TOKEN}))
+                resp = json.loads(await ws.recv())
+                if resp.get('type') != 'auth_ok':
+                    print('HA WS auth failed', resp)
+                    await state.broadcast({'type': 'ha:status', 'status': 'disconnected', 'reason': 'auth_failed'})
+                    raise RuntimeError('auth failed to HA')
+                # subscribe a state_changed
+                msg = {'id': 1, 'type': 'subscribe_events', 'event_type': 'state_changed'}
+                await ws.send(json.dumps(msg))
+                ack = json.loads(await ws.recv())
+                if not ack.get('success'):
+                    print('HA WS subscribe failed', ack)
+                    await state.broadcast({'type': 'ha:status', 'status': 'disconnected', 'reason': 'subscribe_failed'})
+                    raise RuntimeError('subscribe failed')
+                print('HA listener connected')
+                await state.broadcast({'type': 'ha:status', 'status': 'connected'})
+                backoff = 3  # resetear backoff al conectar
+                async for raw in ws:
                     try:
+                        evt = json.loads(raw)
+                    except Exception:
+                        continue
+                    if evt.get('type') == 'event' and evt.get('event', {}).get('event_type') == 'state_changed':
+                        data = evt['event']['data']
+                        entity_id = data.get('entity_id')
+                        new_state = data.get('new_state')
+                        # forward raw HA event to clients
+                        asyncio.create_task(state.broadcast({'type':'ha:state_changed','entity_id':entity_id,'new_state':new_state}))
+                        # if the new state corresponds to a breaker entity, update local models and notify clients
                         st = None
                         attrs = {}
                         if isinstance(new_state, dict):
@@ -485,6 +670,61 @@ async def ha_listener():
                                     if best and best_score >= 3:
                                         matched = [best]
                                         print(f"[ha_listener] fuzzy match: {entity_id} -> breaker {best.get('id')} (score={best_score})")
+                                        # intentar auto-asignar la entidad al breaker según device_class / unit
+                                        try:
+                                            dc = (attrs.get('device_class') or '').lower() if isinstance(attrs.get('device_class'), str) else ''
+                                            unit = (attrs.get('unit_of_measurement') or '').lower() if isinstance(attrs.get('unit_of_measurement'), str) else ''
+                                            assign_key = None
+                                            if 'current' in dc or unit in ('a', 'amp', 'amps') or '_current' in entity_id.lower():
+                                                assign_key = 'current_entity'
+                                            elif 'power' in dc or unit in ('w', 'kw') or '_power' in entity_id.lower():
+                                                assign_key = 'power_entity'
+                                            elif 'voltage' in dc or unit in ('v',) or '_voltage' in entity_id.lower() or 'tension' in entity_id.lower():
+                                                assign_key = 'voltage_entity'
+                                            elif 'energy' in dc or unit in ('kwh', 'wh') or '_energy' in entity_id.lower():
+                                                assign_key = 'energy_entity'
+                                            # persistir la asignación
+                                            if assign_key:
+                                                try:
+                                                    update_breaker_fields(DATA_PATH, best.get('id'), **{assign_key: entity_id})
+                                                    print(f"[ha_listener] assigned {entity_id} -> {best.get('id')} as {assign_key}")
+                                                except Exception:
+                                                    # fallback: modificar models directamente
+                                                    try:
+                                                        models = load_models()
+                                                        for bb in models.get('breakers', []):
+                                                            if bb.get('id') == best.get('id'):
+                                                                bb[assign_key] = entity_id
+                                                                ents = bb.get('entities') or []
+                                                                if entity_id not in ents:
+                                                                    ents.append(entity_id)
+                                                                    bb['entities'] = ents
+                                                                save_models(models)
+                                                                print(f"[ha_listener] assigned (fallback) {entity_id} -> {best.get('id')} as {assign_key}")
+                                                                break
+                                                    except Exception:
+                                                        pass
+                                            else:
+                                                # no pudimos determinar métrica, añadir a entities para inspección
+                                                try:
+                                                    update_breaker_fields(DATA_PATH, best.get('id'), entities=(best.get('entities') or []) + [entity_id])
+                                                    print(f"[ha_listener] appended {entity_id} to entities of breaker {best.get('id')}")
+                                                except Exception:
+                                                    try:
+                                                        models = load_models()
+                                                        for bb in models.get('breakers', []):
+                                                            if bb.get('id') == best.get('id'):
+                                                                ents = bb.get('entities') or []
+                                                                if entity_id not in ents:
+                                                                    ents.append(entity_id)
+                                                                    bb['entities'] = ents
+                                                                    save_models(models)
+                                                                    print(f"[ha_listener] appended (fallback) {entity_id} to entities of breaker {best.get('id')}")
+                                                                break
+                                                    except Exception:
+                                                        pass
+                                        except Exception:
+                                            pass
                                 except Exception:
                                     pass
                             for b in matched:
@@ -567,10 +807,19 @@ async def ha_listener():
                                 if fields:
                                     update_breaker_fields(DATA_PATH, b.get('id'), **fields)
                                     asyncio.create_task(state.broadcast({'type':'breakers:consumption','id': b.get('id'), **fields}))
-                    except Exception as e:
-                        print('ha_listener update error', e)
-    except Exception as e:
-        print('ha_listener error', e)
+        except asyncio.CancelledError:
+            # detener definitivamente
+            await state.broadcast({'type': 'ha:status', 'status': 'disconnected', 'reason': 'cancelled'})
+            break
+        except Exception as e:
+            # reconectar con backoff exponencial
+            print('ha_listener error, reconnecting:', e)
+            try:
+                await state.broadcast({'type': 'ha:status', 'status': 'disconnected', 'error': str(e)[:200]})
+            except Exception:
+                pass
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
 
 
 def make_app():
@@ -591,7 +840,7 @@ def make_app():
     # start HA listener in the app event loop so it runs correctly
     if HA_WS and HA_TOKEN:
         async def _start_ha(app):
-            app['ha_task'] = asyncio.create_task(ha_listener())
+            app['ha_task'] = asyncio.create_task(ha_listener_forever())
 
         async def _stop_ha(app):
             t = app.get('ha_task')
@@ -609,17 +858,33 @@ def make_app():
         init_models_startup()
         app['watcher_task'] = asyncio.create_task(watch_data_file(app))
 
-    # inicio del consumption manager (deducción por segundo)
-    try:
-        from .consumption_manager import create_manager
-    except Exception:
-        try:
-            from scripts.consumption_manager import create_manager
-        except Exception:
-            create_manager = None
+    # registrar init_models primero para que los demás startup hooks asuman modelos cargados
+    app.on_startup.append(_init_models)
 
-    if create_manager:
+    # inicio del consumption manager (deducción por segundo)
+    import importlib
+    create_manager = None
+    for mod_name in ('scripts.consumption_manager', 'consumption_manager', '.consumption_manager'):
+        try:
+            _mod = importlib.import_module(mod_name)
+            create_manager = getattr(_mod, 'create_manager', None)
+            # si el módulo tiene set_broadcaster, conectarlo para WS
+            set_broadcaster = getattr(_mod, 'set_broadcaster', None)
+            if set_broadcaster:
+                # broadcaster usa el state.broadcast pero puede aceptar sync o async
+                def _ws_emit(msg: dict):
+                    return state.broadcast(msg)
+                set_broadcaster(_ws_emit)
+            if create_manager:
+                break
+        except Exception:
+            continue
+
+    # Permitir deshabilitar el consumo del lado servidor para evitar doble descuento con el tick del frontend
+    enable_server_consumption = os.environ.get('ENABLE_SERVER_CONSUMPTION', '0') == '1'
+    if create_manager and enable_server_consumption:
         async def _start_consumption(app):
+            # _init_models fue añadido antes, on_startup mantiene el orden de append
             app['cons_mgr'] = create_manager(DATA_PATH)
             app['cons_mgr'].start()
 
@@ -639,8 +904,6 @@ def make_app():
                 await t
             except asyncio.CancelledError:
                 pass
-
-    app.on_startup.append(_init_models)
     # sync inicial de breakers desde HA (estados y consumo)
     try:
         from .breaker_service import sync_all_breakers_from_ha
@@ -666,6 +929,8 @@ def make_app():
                     print('sync_all_breakers_from_ha error', res.get('error'))
         app.on_startup.append(_sync_ha)
     app.on_cleanup.append(_cleanup_models)
+    # Ruta adicional para ajustar saldo (delta)
+    app.router.add_post('/tarjetas/{id}/ajuste', tarjeta_adjust_saldo)
     return app
 
 
