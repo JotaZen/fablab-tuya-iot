@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FabLab Energy Monitor - Display</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+        color: #fff;
+        overflow: hidden;
+        padding: 15px;
+        min-height: 100vh;
+      }
+
+      /* Partículas de fondo animadas - reducidas */
+      .particles {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        z-index: 0;
+        pointer-events: none;
+        opacity: 0.3;
+      }
+
+      .particle {
+        position: absolute;
+        background: rgba(100, 200, 255, 0.2);
+        border-radius: 50%;
+        animation: float linear infinite;
+      }
+
+      @keyframes float {
+        0% {
+          transform: translateY(100vh) rotate(0deg);
+          opacity: 0;
+        }
+        10% {
+          opacity: 0.3;
+        }
+        90% {
+          opacity: 0.3;
+        }
+        100% {
+          transform: translateY(-100px) rotate(360deg);
+          opacity: 0;
+        }
+      }
+
+      .container {
+        position: relative;
+        z-index: 1;
+        max-width: 100%;
+        margin: 0 auto;
+        display: flex;
+        gap: 12px;
+        height: calc(100vh - 30px);
+      }
+
+      /* Sidebar con estadísticas verticales */
+      .stats-sidebar {
+        width: 180px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        flex-shrink: 0;
+      }
+
+      .stat-card {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        border: 2px solid rgba(0, 255, 136, 0.5);
+        border-radius: 12px;
+        padding: 15px;
+        text-align: center;
+        box-shadow: 0 6px 24px rgba(0, 255, 136, 0.25);
+      }
+
+      .stat-label {
+        font-size: 0.85rem;
+        color: rgba(255, 255, 255, 0.8);
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        margin-bottom: 12px;
+        font-weight: 600;
+      }
+
+      .stat-value {
+        font-size: 2.2rem;
+        font-weight: 700;
+        color: #00ff88;
+        text-shadow: 0 0 15px rgba(0, 255, 136, 0.5);
+        line-height: 1.2;
+      }
+
+      .stat-unit {
+        font-size: 1rem;
+        color: rgba(255, 255, 255, 0.7);
+        margin-left: 5px;
+        font-weight: 500;
+      }
+
+      .breakers-grid {
+        flex: 1;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 12px;
+        overflow-y: auto;
+        padding-right: 5px;
+      }
+
+      .breakers-grid::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      .breakers-grid::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 10px;
+      }
+
+      .breakers-grid::-webkit-scrollbar-thumb {
+        background: rgba(0, 212, 255, 0.3);
+        border-radius: 10px;
+      }
+
+      .breaker-card {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        border: 2px solid rgba(0, 212, 255, 0.6);
+        border-radius: 15px;
+        padding: 15px;
+        position: relative;
+        overflow: hidden;
+        transition: all 0.3s ease;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+      }
+
+      /* Estado ON con brillo verde */
+      .breaker-card.on {
+        border-color: rgba(0, 255, 136, 0.7);
+        background: rgba(0, 255, 136, 0.05);
+      }
+
+      .breaker-card.on::before {
+        content: "";
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 15px;
+        height: 15px;
+        background: #00ff88;
+        border-radius: 50%;
+        box-shadow: 0 0 15px #00ff88, 0 0 30px #00ff88;
+        animation: pulse 2s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0%, 100% {
+          transform: scale(1);
+          opacity: 1;
+        }
+        50% {
+          transform: scale(1.3);
+          opacity: 0.7;
+        }
+      }
+
+      /* Alerta de energía baja */
+      .breaker-card.low-balance {
+        border-color: #ff9900;
+        background: rgba(255, 153, 0, 0.1);
+      }
+
+      .breaker-card.low-balance::before {
+        background: #ff9900;
+        box-shadow: 0 0 15px #ff9900;
+        animation: pulse 2s ease-in-out infinite;
+      }
+
+      /* Alerta crítica */
+      .breaker-card.critical-balance {
+        animation: criticalBlink 2s ease-in-out infinite;
+      }
+
+      @keyframes criticalBlink {
+        0%, 100% {
+          border-color: #ff3366;
+          background: rgba(255, 51, 102, 0.1);
+        }
+        50% {
+          border-color: #ff6699;
+          background: rgba(255, 51, 102, 0.15);
+        }
+      }
+
+      .breaker-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+
+      .breaker-name {
+        font-size: 1.2rem;
+        font-weight: 700;
+        color: #00d4ff;
+        text-shadow: 0 0 10px rgba(0, 212, 255, 0.6);
+      }
+
+      .breaker-status {
+        font-size: 0.75rem;
+        padding: 5px 12px;
+        border-radius: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+      }
+
+      .breaker-status.on {
+        background: rgba(0, 255, 136, 0.2);
+        color: #00ff88;
+        border: 1px solid #00ff88;
+      }
+
+      .breaker-status.off {
+        background: rgba(255, 255, 255, 0.1);
+        color: rgba(255, 255, 255, 0.5);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+      }
+
+      .metric {
+        background: rgba(0, 0, 0, 0.4);
+        border-radius: 10px;
+        padding: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+      }
+
+      .metric-label {
+        font-size: 0.7rem;
+        color: rgba(255, 255, 255, 0.85);
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        margin-bottom: 5px;
+        font-weight: 600;
+      }
+
+      .metric-value {
+        font-size: 1.2rem;
+        font-weight: 700;
+        color: #fff;
+      }
+
+      .metric-value.power {
+        color: #ffd700;
+      }
+
+      .metric-value.balance {
+        color: #00ff88;
+      }
+
+      .metric-value.balance.low {
+        color: #ff9900;
+      }
+
+      .metric-value.balance.critical {
+        color: #ff3366;
+      }
+
+      .metric-unit {
+        font-size: 0.85rem;
+        color: rgba(255, 255, 255, 0.65);
+        margin-left: 3px;
+        font-weight: 500;
+      }
+
+      /* Métrica principal (energía disponible) */
+      .metric-main {
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 12px;
+        padding: 12px;
+        border: 2px solid rgba(0, 255, 136, 0.5);
+        text-align: center;
+        margin-top: 10px;
+      }
+
+      .metric-main .metric-label {
+        font-size: 0.75rem;
+        margin-bottom: 8px;
+      }
+
+      .metric-main .metric-value {
+        font-size: 1.8rem;
+        line-height: 1.2;
+      }
+
+      .metric-main .metric-unit {
+        font-size: 1rem;
+      }
+
+      .progress-bar {
+        width: 100%;
+        height: 6px;
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 8px;
+        overflow: hidden;
+        margin-top: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #00ff88, #00d4ff);
+        border-radius: 8px;
+        transition: width 0.5s ease;
+      }
+
+      .progress-fill.low {
+        background: linear-gradient(90deg, #ff9900, #ffaa33);
+      }
+
+      .progress-fill.critical {
+        background: linear-gradient(90deg, #ff3366, #ff6699);
+      }
+
+      .timestamp {
+        position: fixed;
+        bottom: 10px;
+        right: 15px;
+        font-size: 0.7rem;
+        color: rgba(255, 255, 255, 0.4);
+        font-weight: 300;
+        z-index: 10;
+      }
+
+      /* Indicador de conexión */
+      .connection-status {
+        position: fixed;
+        top: 10px;
+        right: 15px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.75rem;
+        color: rgba(255, 255, 255, 0.7);
+        z-index: 10;
+      }
+
+      .connection-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #00ff88;
+        box-shadow: 0 0 8px #00ff88;
+        animation: pulse 2s ease-in-out infinite;
+      }
+
+      .connection-dot.disconnected {
+        background: #ff3366;
+        box-shadow: 0 0 8px #ff3366;
+      }
+
+      /* Estilo para tarjetas en carga */
+      .breaker-card.charging {
+        border-color: rgba(255, 215, 0, 0.9) !important;
+        background: rgba(255, 215, 0, 0.15) !important;
+        box-shadow: 0 0 30px rgba(255, 215, 0, 0.4), 0 6px 20px rgba(0, 0, 0, 0.5) !important;
+        animation: chargingPulse 2s ease-in-out infinite;
+      }
+
+      @keyframes chargingPulse {
+        0%, 100% {
+          box-shadow: 0 0 25px rgba(255, 215, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.5);
+        }
+        50% {
+          box-shadow: 0 0 40px rgba(255, 215, 0, 0.6), 0 6px 20px rgba(0, 0, 0, 0.5);
+        }
+      }
+
+      .charging-header {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        margin-bottom: 10px;
+        padding: 10px;
+        background: rgba(255, 215, 0, 0.2);
+        border-radius: 10px;
+        border: 1px solid rgba(255, 215, 0, 0.5);
+      }
+
+      .charging-header .tarjeta-name {
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: #ffd700;
+        text-shadow: 0 0 10px rgba(255, 215, 0, 0.8);
+      }
+
+      .battery-icon {
+        font-size: 1.8rem;
+        animation: batteryCharge 1.5s ease-in-out infinite;
+      }
+
+      @keyframes batteryCharge {
+        0%, 100% {
+          opacity: 0.6;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1.1);
+        }
+      }
+
+      .charging-energy {
+        text-align: center;
+        padding: 15px;
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 12px;
+        border: 2px solid rgba(255, 215, 0, 0.5);
+      }
+
+      .charging-energy .energy-label {
+        font-size: 0.75rem;
+        color: rgba(255, 255, 255, 0.85);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 8px;
+        font-weight: 600;
+      }
+
+      .charging-energy .energy-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #ffd700;
+        text-shadow: 0 0 15px rgba(255, 215, 0, 0.6);
+      }
+
+      .charging-energy .energy-unit {
+        font-size: 1rem;
+        color: rgba(255, 255, 255, 0.7);
+        margin-left: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Partículas de fondo -->
+    <div class="particles" id="particles"></div>
+
+    <!-- Indicador de conexión -->
+    <div class="connection-status">
+      <div class="connection-dot" id="connectionDot"></div>
+      <span id="connectionText">Conectado</span>
+    </div>
+
+    <div class="container">
+      <!-- Sidebar con estadísticas verticales -->
+      <div class="stats-sidebar">
+        <div class="stat-card">
+          <div class="stat-label">⚡ Consumo</div>
+          <div class="stat-value">
+            <span id="totalPowerPerSecond">0</span><span class="stat-unit">W/s</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">📊 Activos</div>
+          <div class="stat-value">
+            <span id="activeBreakers">0</span><span class="stat-unit">/<span id="totalBreakers">0</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Grid de breakers -->
+      <div class="breakers-grid" id="breakersGrid"></div>
+    </div>
+
+    <!-- Timestamp -->
+    <div class="timestamp" id="timestamp">Cargando...</div>
+
+    <script>
+      // Generar partículas de fondo
+      const particlesContainer = document.getElementById("particles");
+      for (let i = 0; i < 15; i++) {
+        const particle = document.createElement("div");
+        particle.className = "particle";
+        const size = Math.random() * 3 + 1;
+        particle.style.width = size + "px";
+        particle.style.height = size + "px";
+        particle.style.left = Math.random() * 100 + "%";
+        particle.style.animationDuration = Math.random() * 20 + 15 + "s";
+        particle.style.animationDelay = Math.random() * 10 + "s";
+        particlesContainer.appendChild(particle);
+      }
+
+      // WebSocket connection
+      const ws = new WebSocket(
+        (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws"
+      );
+
+      let currentModels = { breakers: [], tarjetas: [], arduinos: [] };
+      let isConnected = false;
+
+      ws.onopen = () => {
+        isConnected = true;
+        updateConnectionStatus(true);
+        console.log("WebSocket conectado");
+      };
+
+      ws.onclose = () => {
+        isConnected = false;
+        updateConnectionStatus(false);
+        console.log("WebSocket desconectado");
+        setTimeout(() => location.reload(), 3000);
+      };
+
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        updateConnectionStatus(false);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleWebSocketMessage(data);
+        } catch (e) {
+          console.error("Error parsing WebSocket message:", e);
+        }
+      };
+
+      function handleWebSocketMessage(data) {
+        if (data.type === "models" && data.data) {
+          currentModels = data.data;
+          renderDisplay();
+        } else if (data.type === "breakers:update" || data.type === "breakers:consumption") {
+          const breaker = currentModels.breakers.find((b) => b.id === data.id);
+          if (breaker) {
+            if (data.type === "breakers:update") {
+              breaker.estado = data.state === "on";
+            } else if (data.type === "breakers:consumption") {
+              if ("power" in data) breaker.power = data.power;
+              if ("voltage" in data) breaker.voltage = data.voltage;
+              if ("current" in data) breaker.current = data.current;
+              if ("energy" in data) breaker.energy = data.energy;
+            }
+            renderDisplay();
+          }
+        } else if (data.type === "tarjetas:update") {
+          const tarjeta = currentModels.tarjetas.find((t) => t.id === data.id);
+          if (tarjeta && data.tarjeta) {
+            Object.assign(tarjeta, data.tarjeta);
+            renderDisplay();
+          }
+        }
+      }
+
+      function updateConnectionStatus(connected) {
+        const dot = document.getElementById("connectionDot");
+        const text = document.getElementById("connectionText");
+        if (connected) {
+          dot.classList.remove("disconnected");
+          text.textContent = "Conectado";
+        } else {
+          dot.classList.add("disconnected");
+          text.textContent = "Desconectado";
+        }
+      }
+
+      function renderDisplay() {
+        const breakers = currentModels.breakers || [];
+        const tarjetas = currentModels.tarjetas || [];
+        const arduinos = currentModels.arduinos || [];
+
+        // Calcular consumo total y breakers activos
+        let totalPowerPerSecond = 0;
+        let activeCount = 0;
+
+        breakers.forEach((b) => {
+          if (b.estado) {
+            activeCount++;
+            totalPowerPerSecond += parseFloat(b.power || 0);
+          }
+        });
+
+        // Actualizar estadísticas
+        document.getElementById("totalPowerPerSecond").textContent = totalPowerPerSecond.toFixed(2);
+        document.getElementById("activeBreakers").textContent = activeCount;
+        document.getElementById("totalBreakers").textContent = breakers.length;
+
+        // Renderizar breakers
+        const grid = document.getElementById("breakersGrid");
+        grid.innerHTML = "";
+
+        breakers.forEach((breaker) => {
+          const tarjeta = tarjetas.find((t) => t.id === breaker.tarjeta);
+          const energia = tarjeta ? parseFloat(tarjeta.saldo || 0) : 0;
+          const maxEnergia = 200000;
+          const energiaPercent = Math.min((energia / maxEnergia) * 100, 100);
+
+          // Verificar si la tarjeta está en carga
+          let isCharging = false;
+          if (tarjeta) {
+            arduinos.forEach((arduino) => {
+              if (arduino.charging && Array.isArray(arduino.charging)) {
+                const charging = arduino.charging.find((c) => c.uid === tarjeta.id);
+                if (charging) {
+                  isCharging = true;
+                }
+              }
+            });
+          }
+
+          // Determinar alertas de energía
+          let balanceClass = "";
+          let cardClass = "breaker-card";
+
+          if (isCharging) {
+            cardClass += " charging";
+          } else if (breaker.estado) {
+            cardClass += " on";
+            if (energia < 10000) {
+              balanceClass = "critical";
+              cardClass += " critical-balance";
+            } else if (energia < 50000) {
+              balanceClass = "low";
+              cardClass += " low-balance";
+            }
+          }
+
+          let progressClass = "progress-fill";
+          if (balanceClass === "critical") progressClass += " critical";
+          else if (balanceClass === "low") progressClass += " low";
+
+          const card = document.createElement("div");
+          card.className = cardClass;
+
+          if (isCharging) {
+            // Vista especial para tarjetas en carga
+            card.innerHTML = `
+              <div class="charging-header">
+                <div class="battery-icon">🔋</div>
+                <div class="tarjeta-name">${tarjeta?.nombre || "Tarjeta"}</div>
+              </div>
+              <div class="charging-energy">
+                <div class="energy-label">⚡ Energía Actual</div>
+                <div class="energy-value">
+                  ${Math.round(energia/1000).toLocaleString()}<span class="energy-unit">KW</span>
+                </div>
+              </div>
+            `;
+          } else {
+            // Vista normal para breakers
+            card.innerHTML = `
+              <div class="breaker-header">
+                <div class="breaker-name">${breaker.nombre || "Breaker"}</div>
+                <div class="breaker-status ${breaker.estado ? "on" : "off"}">
+                  ${breaker.estado ? "● ON" : "○ OFF"}
+                </div>
+              </div>
+
+              <div class="metric" style="margin-top: 10px;">
+                <div class="metric-label">⚡ Consumo Actual</div>
+                <div class="metric-value power">
+                  ${(breaker.power || 0).toFixed(2)}<span class="metric-unit">W/s</span>
+                </div>
+              </div>
+
+              <div class="metric-main">
+                <div class="metric-label">🔋 Energía Disponible</div>
+                <div class="metric-value balance ${balanceClass}">
+                  ${Math.round(energia).toLocaleString()}<span class="metric-unit">W</span>
+                </div>
+                <div class="progress-bar" style="margin-top: 10px;">
+                  <div class="${progressClass}" style="width: ${energiaPercent}%"></div>
+                </div>
+              </div>
+            `;
+          }
+
+          grid.appendChild(card);
+        });
+
+        updateTimestamp();
+      }
+
+      function updateTimestamp() {
+        const now = new Date();
+        const formatted = now.toLocaleString("es-ES", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+        document.getElementById("timestamp").textContent = `Última actualización: ${formatted}`;
+      }
+
+      // Fetch inicial
+      async function fetchInitialData() {
+        try {
+          const response = await fetch("/models");
+          const data = await response.json();
+          currentModels = data;
+          renderDisplay();
+        } catch (e) {
+          console.error("Error fetching initial data:", e);
+        }
+      }
+
+      setInterval(fetchInitialData, 5000);
+      fetchInitialData();
+      setInterval(updateTimestamp, 1000);
+
+      // Tick automático
+      let lastTick = Date.now();
+      let tickInProgress = false;
+
+      async function tickConsumption() {
+        if (tickInProgress) return;
+
+        const now = Date.now();
+        const elapsed = (now - lastTick) / 1000;
+
+        if (elapsed < 0.8) return;
+
+        tickInProgress = true;
+        lastTick = now;
+
+        try {
+          const response = await fetch("/breakers/tick-consumption", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ elapsed }),
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            console.log(`[Tick] Procesados ${result.processed} breakers`);
+          }
+        } catch (e) {
+          console.error("[Tick] Error:", e);
+        } finally {
+          tickInProgress = false;
+        }
+      }
+
+      setInterval(tickConsumption, 1000);
+    </script>
+  </body>
+</html>

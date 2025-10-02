@@ -2,71 +2,367 @@
   "tarjetas": [
     {
       "id": "D69335A4",
-      "saldo": 0.0
+      "nombre": "Agustin",
+      "saldo": 955855.464
     },
     {
       "id": "958710AD",
-      "saldo": 1223.403
+      "nombre": "Test",
+      "saldo": 190921.0
+    },
+    {
+      "id": "35F515AD",
+      "saldo": 0.0,
+      "nombre": "T9"
+    },
+    {
+      "id": "C5A56AD",
+      "saldo": 0,
+      "nombre": "T8"
+    },
+    {
+      "id": "B53D10AD",
+      "saldo": 0,
+      "nombre": "T7"
+    },
+    {
+      "id": "B5B7FAD",
+      "saldo": 0,
+      "nombre": "T6"
+    },
+    {
+      "id": "9518ABAC",
+      "saldo": 0,
+      "nombre": "T5"
+    },
+    {
+      "id": "45E9DAD",
+      "saldo": 0,
+      "nombre": "T4"
+    },
+    {
+      "id": "6577AAD",
+      "saldo": 0,
+      "nombre": "T3"
+    },
+    {
+      "id": "6581AAAC",
+      "saldo": 0,
+      "nombre": "T2"
+    },
+    {
+      "id": "1651B89E",
+      "saldo": 100000.0,
+      "nombre": "T1"
     }
   ],
   "breakers": [
     {
-      "id": "01K4GQ8964RSBY1793HWJBH7KN",
-      "tuya_id": "eb8e6e63110f3332dcipz1",
+      "id": "agustin",
+      "tuya_id": "D69335A4",
       "entity_id": "switch.agustin",
       "nombre": "Agustin",
       "estado": false,
       "tarjeta": "D69335A4",
-      "energy": 0.53,
-      "energy_entity": "sensor.breaker_2_energia_total",
-      "current_entity": "sensor.liceo_5_corriente_de_la_fase_c",
-      "power_entity": "sensor.liceo_5_potencia_de_la_fase_c",
-      "voltage_entity": "sensor.breaker_2_tension_de_la_fase_a",
-      "voltage": 220.2,
-      "current": 0.143,
-      "power": 0.025,
-      "consumption_last_ws": 39.0,
-      "consumption_power_w": 39.0,
+      "energy": 0.62,
+      "energy_entity": "sensor.agustin_energia_total",
+      "current_entity": "sensor.agustin_corriente_de_la_fase_c",
+      "power_entity": "sensor.agustin_potencia_de_la_fase_c",
+      "voltage_entity": "sensor.liceo_5_tension_de_la_fase_a",
+      "voltage": 232.0,
+      "current": 0.0,
+      "power": 0.0,
+      "consumption_last_ws": 22.724,
+      "consumption_power_w": 0,
       "entities": [
-        "sensor.breaker_2_corriente_de_la_fase_a",
-        "sensor.breaker_2_potencia_de_la_fase_a",
-        "sensor.breaker_2_corriente_de_la_fase_b",
-        "sensor.breaker_2_potencia_de_la_fase_b",
-        "select.wifi_breaker_comportamiento_de_encendido",
-        "switch.alargador_inteligente_interruptor",
-        "sensor.alargador_inteligente_corriente_de_la_fase_a",
-        "sensor.alargador_inteligente_potencia_de_la_fase_a",
-        "sensor.alargador_inteligente_corriente_de_la_fase_b",
-        "sensor.alargador_inteligente_potencia_de_la_fase_b",
-        "sensor.alargador_inteligente_corriente_de_la_fase_c",
-        "sensor.alargador_inteligente_potencia_de_la_fase_c",
-        "sensor.liceo_5_corriente_de_la_fase_a",
-        "sensor.liceo_5_potencia_de_la_fase_a",
-        "sensor.liceo_5_corriente_de_la_fase_b",
-        "sensor.liceo_5_potencia_de_la_fase_b"
+        "sensor.agustin_corriente_de_la_fase_a",
+        "sensor.agustin_potencia_de_la_fase_a",
+        "sensor.agustin_tension_de_la_fase_a",
+        "sensor.agustin_corriente_de_la_fase_b",
+        "sensor.agustin_potencia_de_la_fase_b",
+        "sensor.agustin_tension_de_la_fase_b",
+        "sensor.agustin_corriente_de_la_fase_c",
+        "sensor.agustin_potencia_de_la_fase_c",
+        "sensor.agustin_tension_de_la_fase_c",
+        "select.wifi_breaker_comportamiento_de_encendido"
       ]
     },
     {
-      "id": "eb98f189ead047b85816m3",
-      "tuya_id": "eb98f189ead047b85816m3",
+      "id": "ebf6994cfb6a87943dz2ni",
+      "tuya_id": "ebf6994cfb6a87943dz2ni",
+      "entity_id": "switch.breaker_10_interruptor",
+      "nombre": "Liceo-1",
+      "estado": false,
+      "tarjeta": "1651B89E",
+      "energy_entity": "sensor.breaker_10_energia_total",
+      "entities": [
+        "switch.breaker_10_interruptor",
+        "sensor.breaker_10_corriente_de_la_fase_a",
+        "sensor.breaker_10_potencia_de_la_fase_a",
+        "sensor.breaker_10_tension_de_la_fase_a",
+        "sensor.breaker_10_corriente_de_la_fase_b",
+        "sensor.breaker_10_potencia_de_la_fase_b",
+        "sensor.breaker_10_tension_de_la_fase_b",
+        "sensor.breaker_10_corriente_de_la_fase_c",
+        "sensor.breaker_10_potencia_de_la_fase_c",
+        "sensor.breaker_10_tension_de_la_fase_c"
+      ],
+      "voltage": 231.6,
+      "current": 0.0,
+      "power": 0.0,
+      "consumption_last_ws": 4.0
+    },
+    {
+      "id": "liceo_2",
+      "tuya_id": "958710AD",
+      "entity_id": "switch.breaker_2_interruptor",
+      "nombre": "Liceo-2",
+      "estado": false,
+      "tarjeta": "6581AAAC",
+      "energy_entity": "sensor.breaker_2_energia_total",
+      "entities": [
+        "switch.breaker_2_interruptor",
+        "sensor.breaker_2_corriente_de_la_fase_a",
+        "sensor.breaker_2_potencia_de_la_fase_a",
+        "sensor.breaker_2_tension_de_la_fase_a",
+        "sensor.breaker_2_corriente_de_la_fase_b",
+        "sensor.breaker_2_potencia_de_la_fase_b",
+        "sensor.breaker_2_tension_de_la_fase_b",
+        "sensor.breaker_2_corriente_de_la_fase_c",
+        "sensor.breaker_2_potencia_de_la_fase_c",
+        "sensor.breaker_2_tension_de_la_fase_c"
+      ],
+      "voltage": 0
+    },
+    {
+      "id": "liceo_3",
+      "tuya_id": "958710AD",
+      "entity_id": "switch.breaker_3_interruptor",
+      "nombre": "Liceo-3",
+      "estado": false,
+      "tarjeta": "6577AAD",
+      "energy_entity": "sensor.breaker_3_energia_total",
+      "entities": [
+        "switch.breaker_3_interruptor",
+        "sensor.breaker_3_corriente_de_la_fase_a",
+        "sensor.breaker_3_potencia_de_la_fase_a",
+        "sensor.breaker_3_tension_de_la_fase_a",
+        "sensor.breaker_3_corriente_de_la_fase_b",
+        "sensor.breaker_3_potencia_de_la_fase_b",
+        "sensor.breaker_3_tension_de_la_fase_b",
+        "sensor.breaker_3_corriente_de_la_fase_c",
+        "sensor.breaker_3_potencia_de_la_fase_c",
+        "sensor.breaker_3_tension_de_la_fase_c"
+      ],
+      "voltage": 0
+    },
+    {
+      "id": "liceo_4",
+      "tuya_id": "958710AD",
+      "entity_id": "switch.breaker_4_interruptor",
+      "nombre": "Liceo-4",
+      "estado": false,
+      "tarjeta": "45E9DAD",
+      "energy_entity": "sensor.breaker_4_energia_total",
+      "entities": [
+        "switch.breaker_4_interruptor",
+        "sensor.breaker_4_corriente_de_la_fase_a",
+        "sensor.breaker_4_potencia_de_la_fase_a",
+        "sensor.breaker_4_tension_de_la_fase_a",
+        "sensor.breaker_4_corriente_de_la_fase_b",
+        "sensor.breaker_4_potencia_de_la_fase_b",
+        "sensor.breaker_4_tension_de_la_fase_b",
+        "sensor.breaker_4_corriente_de_la_fase_c",
+        "sensor.breaker_4_potencia_de_la_fase_c",
+        "sensor.breaker_4_tension_de_la_fase_c"
+      ],
+      "voltage": 0
+    },
+    {
+      "id": "liceo_5",
+      "tuya_id": "9518ABAC",
       "entity_id": "switch.liceo_5",
       "nombre": "Liceo-5",
       "estado": false,
-      "tarjeta": "958710AD",
+      "tarjeta": "9518ABAC",
       "energy_entity": "sensor.liceo_5_energia_total",
       "entities": [
-        "switch.wifi_breaker_interruptor_1"
-      ]
+        "switch.liceo_5",
+        "sensor.liceo_5_corriente_de_la_fase_a",
+        "sensor.liceo_5_potencia_de_la_fase_a",
+        "sensor.liceo_5_tension_de_la_fase_a",
+        "sensor.liceo_5_corriente_de_la_fase_b",
+        "sensor.liceo_5_potencia_de_la_fase_b",
+        "sensor.liceo_5_tension_de_la_fase_b",
+        "sensor.liceo_5_corriente_de_la_fase_c",
+        "sensor.liceo_5_potencia_de_la_fase_c",
+        "sensor.liceo_5_tension_de_la_fase_c"
+      ],
+      "voltage": 232.0
+    },
+    {
+      "id": "eb3ecccb08de5e8fdaxqjq",
+      "tuya_id": "eb3ecccb08de5e8fdaxqjq",
+      "entity_id": "switch.breaker_6_interruptor",
+      "nombre": "Liceo-6",
+      "estado": false,
+      "tarjeta": "B5B7FAD",
+      "energy_entity": "sensor.breaker_6_energia_total",
+      "entities": [
+        "switch.breaker_6_interruptor",
+        "sensor.breaker_6_corriente_de_la_fase_a",
+        "sensor.breaker_6_potencia_de_la_fase_a",
+        "sensor.breaker_6_tension_de_la_fase_a",
+        "sensor.breaker_6_corriente_de_la_fase_b",
+        "sensor.breaker_6_potencia_de_la_fase_b",
+        "sensor.breaker_6_tension_de_la_fase_b",
+        "sensor.breaker_6_corriente_de_la_fase_c",
+        "sensor.breaker_6_potencia_de_la_fase_c",
+        "sensor.breaker_6_tension_de_la_fase_c"
+      ],
+      "voltage": 232.0,
+      "current": 0.0,
+      "power": 0.0,
+      "consumption_last_ws": 0.0
+    },
+    {
+      "id": "eb3ecccb08de5e8fdaxqjq",
+      "tuya_id": "eb3ecccb08de5e8fdaxqjq",
+      "entity_id": "switch.breaker_7_interruptor",
+      "nombre": "Liceo-7",
+      "estado": true,
+      "tarjeta": "B53D10AD",
+      "energy_entity": "sensor.breaker_7_energia_total",
+      "entities": [
+        "switch.breaker_7_interruptor",
+        "sensor.breaker_7_corriente_de_la_fase_a",
+        "sensor.breaker_7_potencia_de_la_fase_a",
+        "sensor.breaker_7_tension_de_la_fase_a",
+        "sensor.breaker_7_corriente_de_la_fase_b",
+        "sensor.breaker_7_potencia_de_la_fase_b",
+        "sensor.breaker_7_tension_de_la_fase_b",
+        "sensor.breaker_7_corriente_de_la_fase_c",
+        "sensor.breaker_7_potencia_de_la_fase_c",
+        "sensor.breaker_7_tension_de_la_fase_c"
+      ],
+      "voltage": 231.0,
+      "current": 0.0,
+      "power": 0.0,
+      "consumption_last_ws": 40.0
+    },
+    {
+      "id": "eb7fb14604bce5beeczasf",
+      "tuya_id": "eb7fb14604bce5beeczasf",
+      "entity_id": "switch.breaker_8_interruptor",
+      "nombre": "Liceo-8",
+      "estado": false,
+      "tarjeta": "C5A56AD",
+      "energy_entity": "sensor.breaker_8_energia_total",
+      "entities": [
+        "switch.breaker_8_interruptor",
+        "sensor.breaker_8_corriente_de_la_fase_a",
+        "sensor.breaker_8_potencia_de_la_fase_a",
+        "sensor.breaker_8_tension_de_la_fase_a",
+        "sensor.breaker_8_corriente_de_la_fase_b",
+        "sensor.breaker_8_potencia_de_la_fase_b",
+        "sensor.breaker_8_tension_de_la_fase_b",
+        "sensor.breaker_8_corriente_de_la_fase_c",
+        "sensor.breaker_8_potencia_de_la_fase_c",
+        "sensor.breaker_8_tension_de_la_fase_c"
+      ],
+      "voltage": 231.8,
+      "current": 0.0,
+      "power": 0.0,
+      "consumption_last_ws": 10.0,
+      "energy": 0.01
+    },
+    {
+      "id": "eb9a238727302e4422hpdm",
+      "tuya_id": "eb9a238727302e4422hpdm",
+      "entity_id": "switch.breaker_9_interruptor",
+      "nombre": "Liceo-9",
+      "estado": false,
+      "tarjeta": "35F515AD",
+      "energy_entity": "sensor.breaker_9_energia_total",
+      "entities": [
+        "switch.breaker_9_interruptor",
+        "sensor.breaker_9_corriente_de_la_fase_a",
+        "sensor.breaker_9_potencia_de_la_fase_a",
+        "sensor.breaker_9_tension_de_la_fase_a",
+        "sensor.breaker_9_corriente_de_la_fase_b",
+        "sensor.breaker_9_potencia_de_la_fase_b",
+        "sensor.breaker_9_tension_de_la_fase_b",
+        "sensor.breaker_9_corriente_de_la_fase_c",
+        "sensor.breaker_9_potencia_de_la_fase_c",
+        "sensor.breaker_9_tension_de_la_fase_c"
+      ],
+      "current": 0.0,
+      "power": 0.0,
+      "voltage": 231.8,
+      "consumption_last_ws": 10.0,
+      "energy": 0.03
     }
   ],
   "arduinos": [
     {
-      "id": "ESP8266_02",
-      "es_estacion_carga": false,
+      "id": "EOLICO",
+      "es_estacion_carga": true,
       "w_por_segundo": 10,
       "last": {
-        "id": "ESP8266_02",
+        "id": "EOLICO",
+        "nfc": "E5104AD",
+        "ts": 1759365531895
+      },
+      "charging": [
+        {
+          "uid": "E5104AD",
+          "started_ms": 1759365531895,
+          "wps": 10.0,
+          "last": {
+            "id": "EOLICO",
+            "nfc": "E5104AD",
+            "ts": 1759365531895
+          }
+        }
+      ]
+    },
+    {
+      "id": "SOLAR",
+      "es_estacion_carga": true,
+      "w_por_segundo": 10,
+      "last": {
+        "id": "SOLAR",
+        "nfc": "E5104AD",
+        "ts": 1759365747551
+      },
+      "charging": [
+        {
+          "uid": "E5104AD",
+          "started_ms": 1759365456220,
+          "wps": 10.0,
+          "last": {
+            "id": "SOLAR",
+            "nfc": "E5104AD",
+            "ts": 1759365747551
+          }
+        }
+      ]
+    },
+    {
+      "id": "ESP8266_01",
+      "es_estacion_carga": false,
+      "w_por_segundo": 1,
+      "last": {
+        "id": "ESP8266_01",
         "nfc": "D69335A4"
+      }
+    },
+    {
+      "id": "ESP8266_02",
+      "es_estacion_carga": false,
+      "last": {
+        "id": "ESP8266_02",
+        "nfc": "E5104AD"
       },
       "charging": [
         {
@@ -82,24 +378,87 @@
       ]
     },
     {
-      "id": "ESP8266_01",
+      "id": "ESP8266_03",
       "es_estacion_carga": false,
-      "w_por_segundo": 1,
       "last": {
-        "id": "ESP8266_01",
-        "nfc": "D69335A4"
+        "id": "ESP8266_03",
+        "nfc": "C5A56AD",
+        "ts": 1759362597079
+      },
+      "charging": [
+        {
+          "uid": "958710AD",
+          "started_ms": 1758057895293,
+          "wps": 10.0,
+          "last": {
+            "id": "ESP8266_03",
+            "nfc": "958710AD",
+            "ts": 1758057898862
+          }
+        },
+        {
+          "uid": "35F515AD",
+          "started_ms": 1759362581585,
+          "wps": 10.0,
+          "last": {
+            "id": "ESP8266_03",
+            "nfc": "35F515AD",
+            "ts": 1759362593798
+          }
+        },
+        {
+          "uid": "C5A56AD",
+          "started_ms": 1759362597079,
+          "wps": 10.0,
+          "last": {
+            "id": "ESP8266_03",
+            "nfc": "C5A56AD",
+            "ts": 1759362597079
+          }
+        }
+      ]
+    },
+    {
+      "id": "ESP8266_04",
+      "es_estacion_carga": false,
+      "last": {
+        "id": "ESP8266_04"
       }
     },
     {
-      "id": "ESP8266_03",
-      "es_estacion_carga": true,
-      "w_por_segundo": 10,
+      "id": "ESP8266_05",
+      "es_estacion_carga": false,
       "last": {
-        "id": "ESP8266_03",
-        "nfc": "D69335A4",
-        "ts": 1757902562045
-      },
-      "charging": []
+        "id": "ESP8266_05"
+      }
+    },
+    {
+      "id": "ESP8266_06",
+      "es_estacion_carga": false,
+      "last": {
+        "id": "ESP8266_06"
+      }
+    },
+    {
+      "id": "ESP8266_07",
+      "es_estacion_carga": false,
+      "last": {
+        "id": "ESP8266_07"
+      }
+    },
+    {
+      "id": "ESP8266_08",
+      "es_estacion_carga": false,
+      "last": {
+        "id": "ESP8266_08"
+      }
+    },
+    {
+      "id": "ESP8266_09",
+      "es_estacion_carga": false,
+      "last": {
+        "id": "ESP8266_09"
+      }
     }
   ]
 }

@@ -167,6 +167,10 @@ async def index(request):
     return web.FileResponse(os.path.join(BASE_DIR, 'static', 'index.html'))
 
 
+async def display(request):
+    return web.FileResponse(os.path.join(BASE_DIR, 'static', 'display.html'))
+
+
 async def models_handler(request):
     models = load_models()
     return web.json_response(models)
@@ -545,6 +549,138 @@ async def breaker_pulse_handler(request):
 
     return web.json_response({'ok': True, 'id': br.get('id'), 'pulse': True})
 
+
+async def breaker_refresh_handler(request):
+    """Fuerza actualización de métricas de un breaker consultando Home Assistant.
+    
+    POST /breakers/{id}/refresh
+    
+    Lee el estado actual de todas las entidades del breaker en HA y actualiza localmente.
+    """
+    bid = request.match_info.get('id')
+    br = get_breaker(DATA_PATH, bid)
+    if not br:
+        return web.json_response({'ok': False, 'error': 'unknown breaker'}, status=404)
+    
+    entity_id = br.get('entity_id')
+    if not entity_id or not HA_URL or not HA_TOKEN:
+        return web.json_response({'ok': False, 'error': 'ha_not_configured'}, status=400)
+    
+    # Recopilar todas las entidades a consultar
+    entities_to_query = set()
+    if entity_id:
+        entities_to_query.add(entity_id)
+    
+    # Agregar entidades configuradas explícitamente
+    for key in ('power_entity', 'voltage_entity', 'current_entity', 'energy_entity'):
+        val = br.get(key)
+        if val:
+            entities_to_query.add(val)
+    
+    # Agregar lista de entidades
+    extra = br.get('entities') or []
+    if isinstance(extra, list):
+        for e in extra:
+            if isinstance(e, str):
+                entities_to_query.add(e)
+    
+    if not entities_to_query:
+        return web.json_response({'ok': False, 'error': 'no_entities_configured'}, status=400)
+    
+    # Consultar Home Assistant
+    import aiohttp
+    headers = {'Authorization': f'Bearer {HA_TOKEN}', 'Content-Type': 'application/json'}
+    
+    updated_fields = {}
+    errors = []
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            for ent_id in entities_to_query:
+                try:
+                    async with session.get(f"{HA_URL}/api/states/{ent_id}", headers=headers) as resp:
+                        if resp.status != 200:
+                            errors.append(f"{ent_id}: status {resp.status}")
+                            continue
+                        
+                        state_data = await resp.json()
+                        state = state_data.get('state')
+                        attrs = state_data.get('attributes') or {}
+                        
+                        # Función auxiliar para extraer numérico
+                        def extract_numeric(val):
+                            try:
+                                if val is None:
+                                    return None
+                                if isinstance(val, (int, float)):
+                                    return val
+                                return float(str(val))
+                            except Exception:
+                                return None
+                        
+                        # Actualizar estado si es el switch principal
+                        if ent_id == entity_id:
+                            if state in ('on', 'off'):
+                                new_state_bool = (state == 'on')
+                                if bool(br.get('estado')) != new_state_bool:
+                                    set_breaker_state(DATA_PATH, bid, new_state_bool)
+                                    updated_fields['estado'] = new_state_bool
+                        
+                        # Detectar tipo de sensor y actualizar métricas
+                        lower_eid = ent_id.lower()
+                        
+                        # Corriente
+                        if 'corriente' in lower_eid or 'current' in lower_eid:
+                            current = extract_numeric(state) or extract_numeric(attrs.get('current'))
+                            if current is not None:
+                                updated_fields['current'] = current
+                        
+                        # Voltaje
+                        if 'tension' in lower_eid or 'voltage' in lower_eid:
+                            voltage = extract_numeric(state) or extract_numeric(attrs.get('voltage'))
+                            if voltage is not None:
+                                updated_fields['voltage'] = voltage
+                        
+                        # Potencia
+                        if 'potencia' in lower_eid or 'power' in lower_eid:
+                            power = extract_numeric(state) or extract_numeric(attrs.get('power'))
+                            if power is not None:
+                                updated_fields['power'] = power
+                        
+                        # Energía
+                        if 'energia' in lower_eid or 'energy' in lower_eid:
+                            energy = extract_numeric(state) or extract_numeric(attrs.get('energy'))
+                            if energy is not None:
+                                updated_fields['energy'] = energy
+                        
+                except Exception as e:
+                    errors.append(f"{ent_id}: {str(e)}")
+    
+    except Exception as e:
+        return web.json_response({'ok': False, 'error': f'ha_request_failed: {str(e)}'}, status=500)
+    
+    # Actualizar campos en data.json
+    if updated_fields:
+        try:
+            # Separar estado de métricas
+            estado = updated_fields.pop('estado', None)
+            if estado is not None:
+                # Ya se actualizó con set_breaker_state
+                asyncio.create_task(state.broadcast({'type': 'breakers:update', 'id': bid, 'state': 'on' if estado else 'off'}))
+            
+            if updated_fields:  # Si quedan métricas
+                update_breaker_fields(DATA_PATH, bid, **updated_fields)
+                asyncio.create_task(state.broadcast({'type': 'breakers:consumption', 'id': bid, **updated_fields}))
+        except Exception as e:
+            errors.append(f"save_error: {str(e)}")
+    
+    return web.json_response({
+        'ok': True,
+        'id': bid,
+        'updated': updated_fields,
+        'errors': errors if errors else None
+    })
+
 async def breakers_consumption_handler(request):
     """Devuelve métricas básicas de consumo de todos los breakers."""
     models = load_models()
@@ -562,13 +698,170 @@ async def breakers_consumption_handler(request):
     return web.json_response({'ok': True, 'breakers': out})
 
 
+_last_tick_time = 0  # timestamp del último tick procesado
+_tick_min_interval = 0.8  # mínimo intervalo entre ticks (segundos)
+
+async def breakers_tick_consumption_handler(request):
+    """Procesa consumo de todos los breakers en una sola llamada optimizada.
+    
+    Recorre todos los breakers encendidos, calcula su consumo W·s,
+    y descuenta del saldo de su tarjeta asociada.
+    
+    POST /breakers/tick-consumption { elapsed: 1.0 }
+    
+    Retorna: { ok: true, processed: [...], errors: [...] }
+    """
+    global _last_tick_time
+    import time
+    
+    now = time.time()
+    if now - _last_tick_time < _tick_min_interval:
+        print(f"[Tick] ⚠️ Petición duplicada ignorada (último tick hace {now - _last_tick_time:.2f}s)")
+        return web.json_response({'ok': True, 'breakers': [], 'errors': [], 'skipped': 'duplicate_request'})
+    
+    _last_tick_time = now
+    
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    
+    elapsed = body.get('elapsed', 1.0)  # segundos transcurridos
+    
+    # Cargar modelos directamente (sin executor para evitar race conditions)
+    models = load_models()
+    
+    breakers = models.get('breakers', [])
+    
+    processed = []
+    errors = []
+    
+    # Agrupar descuentos por tarjeta para hacer una sola actualización por tarjeta
+    tarjeta_deltas = {}  # {tarjeta_id: total_ws}
+    breaker_updates = {}  # {breaker_id: consumption_last_ws}
+    
+    for br in breakers:
+        if not br or not br.get('estado'):
+            continue  # breaker apagado
+        
+        tarjeta_id = br.get('tarjeta')
+        if not tarjeta_id:
+            continue  # sin tarjeta asociada
+        
+        # Calcular potencia con lógica mejorada
+        power = br.get('power')
+        voltage = br.get('voltage')
+        current = br.get('current')
+        
+        # Inferir potencia si falta usando V*I
+        inferred = None
+        try:
+            if voltage is not None and current is not None:
+                v_val = float(voltage)
+                i_val = float(current)
+                if v_val > 0 and i_val > 0:
+                    inferred = v_val * i_val
+        except Exception:
+            pass
+        
+        # Determinar potencia final
+        final_power = None
+        try:
+            if power is not None and power != '':
+                p_val = float(power)
+                # Si power es muy pequeño (<10W) probablemente está en kW, convertir
+                if p_val < 10 and p_val > 0:
+                    # Verificar si tiene sentido la conversión comparando con V*I
+                    if inferred is not None and inferred > p_val * 100:
+                        final_power = p_val * 1000.0  # kW a W
+                    else:
+                        final_power = p_val
+                else:
+                    final_power = p_val
+            
+            # Si no hay power o no es válido, usar inferido
+            if final_power is None or final_power <= 0:
+                final_power = inferred
+                
+        except Exception:
+            final_power = inferred
+        
+        # Validar potencia final
+        if final_power is None or final_power <= 0 or not isinstance(final_power, (int, float)):
+            # Log para debugging
+            print(f"[Tick] Breaker {br.get('id')} sin potencia válida: power={power} voltage={voltage} current={current} inferred={inferred}")
+            continue
+        
+        ws = final_power * elapsed  # W·s consumidos
+        
+        # Acumular descuento por tarjeta
+        if tarjeta_id not in tarjeta_deltas:
+            tarjeta_deltas[tarjeta_id] = 0.0
+        tarjeta_deltas[tarjeta_id] += ws
+        
+        # Guardar para actualización posterior
+        breaker_updates[br.get('id')] = round(ws * 1000000) / 1000000
+        
+        processed.append({
+            'breaker_id': br.get('id'),
+            'tarjeta_id': tarjeta_id,
+            'power': round(final_power * 1000000) / 1000000,
+            'ws': round(ws * 1000000) / 1000000
+        })
+    
+    # Actualizar consumption_last_ws en batch (sincrónico para evitar corrupción del JSON)
+    if breaker_updates:
+        for bid, ws_val in breaker_updates.items():
+            try:
+                update_breaker_fields(DATA_PATH, bid, consumption_last_ws=ws_val)
+                # Broadcast actualización (este sí puede ser async)
+                asyncio.create_task(state.broadcast({'type': 'breakers:consumption', 'id': bid, 'ws': ws_val}))
+            except Exception as e:
+                print(f"[Tick] Error actualizando breaker {bid}: {e}")
+    
+    # Aplicar descuentos agrupados por tarjeta (sincrónico para evitar race conditions)
+    for tarjeta_id, total_ws in tarjeta_deltas.items():
+        try:
+            t = adjust_tarjeta_saldo(DATA_PATH, tarjeta_id, -total_ws)
+            if t:
+                # Broadcast actualización de tarjeta
+                asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': t.get('id'), 'tarjeta': t}))
+                
+                # Si saldo llegó a 0, apagar breakers asociados
+                try:
+                    saldo_val = float(t.get('saldo') or 0.0)
+                except Exception:
+                    saldo_val = 0.0
+                
+                if saldo_val <= 0.0:
+                    # Apagar breakers asociados a esta tarjeta
+                    for br in breakers:
+                        if br.get('tarjeta') == tarjeta_id and bool(br.get('estado')):
+                            try:
+                                await set_breaker(DATA_PATH, br.get('id'), False)
+                                asyncio.create_task(state.broadcast({'type': 'breakers:update', 'id': br.get('id'), 'state': 'off'}))
+                            except Exception as e:
+                                errors.append({'breaker_id': br.get('id'), 'error': str(e)})
+        except Exception as e:
+            errors.append({'tarjeta_id': tarjeta_id, 'error': str(e)})
+    
+    return web.json_response({
+        'ok': True,
+        'processed': len(processed),
+        'breakers': processed,
+        'errors': errors
+    })
+
+
 async def ha_listener_forever():
     """Mantiene conexión WS con HA con reconexión automática y reenvía state_changed.
 
     Emite además eventos 'ha:status' con estados 'connected'/'disconnected'.
     """
     if not (HA_WS and HA_TOKEN):
+        print('[HA Listener] NO INICIADO: HA_WS o HA_TOKEN no configurados')
         return
+    print(f'[HA Listener] Iniciando conexión a {HA_WS[:50]}...')
     backoff = 3
     while True:
         try:
@@ -576,13 +869,13 @@ async def ha_listener_forever():
                 # handshake
                 hello = json.loads(await ws.recv())
                 if hello.get('type') != 'auth_required':
-                    print('HA WS unexpected hello', hello)
+                    print('[HA Listener] HA WS unexpected hello', hello)
                     await state.broadcast({'type': 'ha:status', 'status': 'disconnected', 'reason': 'unexpected_hello'})
                     raise RuntimeError('unexpected hello from HA')
                 await ws.send(json.dumps({'type':'auth', 'access_token': HA_TOKEN}))
                 resp = json.loads(await ws.recv())
                 if resp.get('type') != 'auth_ok':
-                    print('HA WS auth failed', resp)
+                    print('[HA Listener] HA WS auth failed', resp)
                     await state.broadcast({'type': 'ha:status', 'status': 'disconnected', 'reason': 'auth_failed'})
                     raise RuntimeError('auth failed to HA')
                 # subscribe a state_changed
@@ -590,10 +883,10 @@ async def ha_listener_forever():
                 await ws.send(json.dumps(msg))
                 ack = json.loads(await ws.recv())
                 if not ack.get('success'):
-                    print('HA WS subscribe failed', ack)
+                    print('[HA Listener] HA WS subscribe failed', ack)
                     await state.broadcast({'type': 'ha:status', 'status': 'disconnected', 'reason': 'subscribe_failed'})
                     raise RuntimeError('subscribe failed')
-                print('HA listener connected')
+                print('[HA Listener] ✓ Conectado y suscrito a state_changed')
                 await state.broadcast({'type': 'ha:status', 'status': 'connected'})
                 backoff = 3  # resetear backoff al conectar
                 async for raw in ws:
@@ -605,6 +898,7 @@ async def ha_listener_forever():
                         data = evt['event']['data']
                         entity_id = data.get('entity_id')
                         new_state = data.get('new_state')
+                        print(f'[HA Event] state_changed: entity_id={entity_id} state={new_state.get("state") if isinstance(new_state, dict) else new_state}')
                         # forward raw HA event to clients
                         asyncio.create_task(state.broadcast({'type':'ha:state_changed','entity_id':entity_id,'new_state':new_state}))
                         # if the new state corresponds to a breaker entity, update local models and notify clients
@@ -617,6 +911,7 @@ async def ha_listener_forever():
                         if entity_id:
                             models = load_models()
                             breakers = models.get('breakers', [])
+                            # Log: buscar breaker matching - construir conjunto completo de entidades
                             matched = []
                             for b in breakers:
                                 ids = set()
@@ -633,100 +928,20 @@ async def ha_listener_forever():
                                         ids.add(val)
                                 if entity_id in ids:
                                     matched.append(b)
-                            if not matched:
-                                # intentar heurística difusa: tokenizar entity_id y buscar correspondencia
-                                try:
-                                    pretty = {'entity_id': entity_id, 'state': st, 'attributes': attrs}
-                                    print(f"[ha_listener] entidad sin breaker: {entity_id} -> {json.dumps(pretty, ensure_ascii=False)}")
-                                except Exception:
-                                    print(f"[ha_listener] entidad sin breaker: {entity_id}")
-                                # fuzzy match: tomar la parte sin dominio y tokens
-                                try:
-                                    short = entity_id.split('.',1)[1] if '.' in entity_id else entity_id
-                                    tokens = re.split('[._\-]', short.lower())
-                                    def token_score(b):
-                                        score = 0
-                                        # nombre e id del breaker
-                                        if b.get('id') and any(t in (b.get('id') or '').lower() for t in tokens):
-                                            score += 2
-                                        if b.get('nombre') and any(t in (b.get('nombre') or '').lower() for t in tokens):
-                                            score += 2
-                                        # entidades configuradas
-                                        for key in ('entity_id','power_entity','energy_entity','voltage_entity','current_entity'):
-                                            val = b.get(key)
-                                            if isinstance(val, str) and any(t in val.lower() for t in tokens):
-                                                score += 3
-                                        # tarjeta id
-                                        if b.get('tarjeta') and any(t in (b.get('tarjeta') or '').lower() for t in tokens):
-                                            score += 1
-                                        return score
-                                    best = None
-                                    best_score = 0
-                                    for b in breakers:
-                                        s = token_score(b)
-                                        if s > best_score:
-                                            best_score = s
-                                            best = b
-                                    if best and best_score >= 3:
-                                        matched = [best]
-                                        print(f"[ha_listener] fuzzy match: {entity_id} -> breaker {best.get('id')} (score={best_score})")
-                                        # intentar auto-asignar la entidad al breaker según device_class / unit
-                                        try:
-                                            dc = (attrs.get('device_class') or '').lower() if isinstance(attrs.get('device_class'), str) else ''
-                                            unit = (attrs.get('unit_of_measurement') or '').lower() if isinstance(attrs.get('unit_of_measurement'), str) else ''
-                                            assign_key = None
-                                            if 'current' in dc or unit in ('a', 'amp', 'amps') or '_current' in entity_id.lower():
-                                                assign_key = 'current_entity'
-                                            elif 'power' in dc or unit in ('w', 'kw') or '_power' in entity_id.lower():
-                                                assign_key = 'power_entity'
-                                            elif 'voltage' in dc or unit in ('v',) or '_voltage' in entity_id.lower() or 'tension' in entity_id.lower():
-                                                assign_key = 'voltage_entity'
-                                            elif 'energy' in dc or unit in ('kwh', 'wh') or '_energy' in entity_id.lower():
-                                                assign_key = 'energy_entity'
-                                            # persistir la asignación
-                                            if assign_key:
-                                                try:
-                                                    update_breaker_fields(DATA_PATH, best.get('id'), **{assign_key: entity_id})
-                                                    print(f"[ha_listener] assigned {entity_id} -> {best.get('id')} as {assign_key}")
-                                                except Exception:
-                                                    # fallback: modificar models directamente
-                                                    try:
-                                                        models = load_models()
-                                                        for bb in models.get('breakers', []):
-                                                            if bb.get('id') == best.get('id'):
-                                                                bb[assign_key] = entity_id
-                                                                ents = bb.get('entities') or []
-                                                                if entity_id not in ents:
-                                                                    ents.append(entity_id)
-                                                                    bb['entities'] = ents
-                                                                save_models(models)
-                                                                print(f"[ha_listener] assigned (fallback) {entity_id} -> {best.get('id')} as {assign_key}")
-                                                                break
-                                                    except Exception:
-                                                        pass
-                                            else:
-                                                # no pudimos determinar métrica, añadir a entities para inspección
-                                                try:
-                                                    update_breaker_fields(DATA_PATH, best.get('id'), entities=(best.get('entities') or []) + [entity_id])
-                                                    print(f"[ha_listener] appended {entity_id} to entities of breaker {best.get('id')}")
-                                                except Exception:
-                                                    try:
-                                                        models = load_models()
-                                                        for bb in models.get('breakers', []):
-                                                            if bb.get('id') == best.get('id'):
-                                                                ents = bb.get('entities') or []
-                                                                if entity_id not in ents:
-                                                                    ents.append(entity_id)
-                                                                    bb['entities'] = ents
-                                                                    save_models(models)
-                                                                    print(f"[ha_listener] appended (fallback) {entity_id} to entities of breaker {best.get('id')}")
-                                                                break
-                                                    except Exception:
-                                                        pass
-                                        except Exception:
-                                            pass
-                                except Exception:
-                                    pass
+                            
+                            # Log resultado de búsqueda con valores recibidos
+                            if matched:
+                                b = matched[0]
+                                # Mostrar valores recibidos para breaker 9 específicamente
+                                if b.get('id') == 'eb9a238727302e4422hpdm':
+                                    print(f'[HA Event] 🔍 BREAKER 9: entity_id={entity_id} state={st} attributes={attrs}')
+                                print(f'[HA Event] ✓ Matched entity_id={entity_id} -> breaker id={b.get("id")} nombre={b.get("nombre")}')
+                            else:
+                                # No se encontró match - loguear solo switches/sensors sin asignar automáticamente
+                                if entity_id.startswith(('switch.', 'sensor.')):
+                                    # Mostrar breakers configurados para debugging
+                                    breaker_info = [(b.get('id'), b.get('entity_id'), len(b.get('entities', []))) for b in breakers]
+                                    print(f"[HA Event] ⚠️  Entidad no asociada: {entity_id} - Breakers: {breaker_info}")
                             for b in matched:
                                 # actualizar estado solo si la entidad es principal o un switch
                                 domain = entity_id.split('.',1)[0] if '.' in entity_id else ''
@@ -769,19 +984,22 @@ async def ha_listener_forever():
                                 if entity_id == b.get('current_entity'):
                                     current = extract_numeric(st)
 
-                                # si no hay coincidencia directa, intentar heurísticas con sufijos incluyendo phase_a
-                                # ejemplo: sensor.agustin_phase_a_current -> mapear a current
+                                # si no hay coincidencia directa, intentar heurísticas con sufijos y palabras clave
+                                # soporta tanto inglés (phase_a, current, voltage, power) como español (fase_a, corriente, tension, potencia)
                                 try:
                                     lower_eid = entity_id.lower() if isinstance(entity_id, str) else ''
-                                    if 'phase_a' in lower_eid:
-                                        if lower_eid.endswith('_current') or '_current' in lower_eid:
-                                            current = extract_numeric(st) if current is None else current
-                                        if lower_eid.endswith('_voltage') or '_voltage' in lower_eid:
-                                            voltage = extract_numeric(st) if voltage is None else voltage
-                                        if lower_eid.endswith('_power') or '_power' in lower_eid:
-                                            power = extract_numeric(st) if power is None else power
-                                        if lower_eid.endswith('_energy') or '_energy' in lower_eid:
-                                            energy = extract_numeric(st) if energy is None else energy
+                                    # detectar corriente/current
+                                    if current is None and ('corriente' in lower_eid or 'current' in lower_eid):
+                                        current = extract_numeric(st)
+                                    # detectar tensión/voltage
+                                    if voltage is None and ('tension' in lower_eid or 'voltage' in lower_eid):
+                                        voltage = extract_numeric(st)
+                                    # detectar potencia/power
+                                    if power is None and ('potencia' in lower_eid or 'power' in lower_eid):
+                                        power = extract_numeric(st)
+                                    # detectar energía/energy
+                                    if energy is None and ('energia' in lower_eid or 'energy' in lower_eid):
+                                        energy = extract_numeric(st)
                                 except Exception:
                                     pass
 
@@ -805,15 +1023,19 @@ async def ha_listener_forever():
                                 if current is not None:
                                     fields['current'] = current
                                 if fields:
+                                    # Log detallado para breaker 9
+                                    if b.get('id') == 'eb9a238727302e4422hpdm':
+                                        print(f'[HA Event] 📊 BREAKER 9 actualizando: entity_id={entity_id} fields={fields}')
                                     update_breaker_fields(DATA_PATH, b.get('id'), **fields)
                                     asyncio.create_task(state.broadcast({'type':'breakers:consumption','id': b.get('id'), **fields}))
         except asyncio.CancelledError:
             # detener definitivamente
+            print('[HA Listener] Detenido (cancelled)')
             await state.broadcast({'type': 'ha:status', 'status': 'disconnected', 'reason': 'cancelled'})
             break
         except Exception as e:
             # reconectar con backoff exponencial
-            print('ha_listener error, reconnecting:', e)
+            print(f'[HA Listener] ERROR, reconectando en {backoff}s: {e}')
             try:
                 await state.broadcast({'type': 'ha:status', 'status': 'disconnected', 'error': str(e)[:200]})
             except Exception:
@@ -825,18 +1047,42 @@ async def ha_listener_forever():
 def make_app():
     app = web.Application()
     app.router.add_get('/', index)
+    app.router.add_get('/display', display)
     app.router.add_get('/ws', websocket_handler)
     app.router.add_get('/models', models_handler)
     app.router.add_post('/rfid', rfid_post)
     app.router.add_post('/breakers/{id}/toggle', breaker_toggle_handler)
     app.router.add_post('/breakers/{id}/set', breaker_set_handler)
     app.router.add_post('/breakers/{id}/pulse', breaker_pulse_handler)
+    app.router.add_post('/breakers/{id}/refresh', breaker_refresh_handler)
     app.router.add_get('/breakers/consumption', breakers_consumption_handler)
+    app.router.add_post('/breakers/tick-consumption', breakers_tick_consumption_handler)
     # Exponer endpoint para actualizar saldo de tarjetas desde la UI
     app.router.add_post('/tarjetas/{id}/saldo', tarjeta_update_saldo)
     # static
     static_dir = os.path.join(BASE_DIR, 'static')
     app.router.add_static('/static/', static_dir, show_index=True)
+    # diagnostic: mostrar información sobre la configuración de HA (no imprimir token)
+    try:
+        import websockets as _ws_check
+        ws_lib = 'websockets (imported ok)'
+    except Exception as e:
+        ws_lib = f'websockets (ERROR: {e})'
+    print(f"[startup] HA_URL={'set: ' + HA_URL[:30] + '...' if HA_URL else 'NOT set'} HA_WS={'set' if HA_WS else 'NOT set'} HA_TOKEN={'set (len=' + str(len(HA_TOKEN)) + ')' if HA_TOKEN else 'NOT set'} websockets_lib={ws_lib}")
+    print(f"[startup] Breakers configurados en data.json:")
+    try:
+        _temp_models = load_models()
+        for _b in _temp_models.get('breakers', []):
+            print(f"  - id={_b.get('id')} entity_id={_b.get('entity_id')} tuya_id={_b.get('tuya_id')} nombre={_b.get('nombre')}")
+            # mostrar entidades configuradas para métricas
+            has_metrics = any([_b.get('power_entity'), _b.get('voltage_entity'), _b.get('current_entity'), _b.get('energy_entity')])
+            if has_metrics:
+                print(f"    Métricas: power={_b.get('power_entity')} voltage={_b.get('voltage_entity')} current={_b.get('current_entity')} energy={_b.get('energy_entity')}")
+            else:
+                print(f"    ⚠️  Sin entidades de métricas configuradas explícitamente")
+    except Exception as _e:
+        print(f"  ERROR cargando breakers: {_e}")
+
     # start HA listener in the app event loop so it runs correctly
     if HA_WS and HA_TOKEN:
         async def _start_ha(app):
@@ -916,17 +1162,23 @@ def make_app():
     if HA_URL and HA_TOKEN:
         async def _sync_ha(app):
             if sync_all_breakers_from_ha:
+                print('[Startup] Sincronizando breakers desde Home Assistant...')
                 res = await sync_all_breakers_from_ha(DATA_PATH)
                 if res.get('ok'):
+                    updated = res.get('updated', [])
+                    print(f'[Startup] ✓ Sincronizados {len(updated)} breakers desde HA')
                     # broadcast de cada breaker actualizado
-                    for u in res.get('updated', []):
+                    for u in updated:
+                        print(f"  - Breaker id={u['id']} estado={'on' if u.get('estado') else 'off'} power={u.get('power')} voltage={u.get('voltage')} current={u.get('current')}")
                         await state.broadcast({'type': 'breakers:update', 'id': u['id'], 'state': 'on' if u.get('estado') else 'off'})
                         m = {k:v for k,v in u.items() if k in ('power','energy','voltage','current') and v is not None}
                         if m:
                             m.update({'type':'breakers:consumption','id': u['id']})
                             await state.broadcast(m)
                 else:
-                    print('sync_all_breakers_from_ha error', res.get('error'))
+                    print(f'[Startup] ✗ Error en sync_all_breakers_from_ha: {res.get("error")}')
+            else:
+                print('[Startup] sync_all_breakers_from_ha no disponible')
         app.on_startup.append(_sync_ha)
     app.on_cleanup.append(_cleanup_models)
     # Ruta adicional para ajustar saldo (delta)

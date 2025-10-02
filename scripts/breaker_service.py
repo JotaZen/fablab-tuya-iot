@@ -104,8 +104,17 @@ async def set_breaker(path: str, breaker_id: str, state: bool) -> Dict[str, Any]
     # prepare results
     res = {'ok': True, 'breaker': br, 'tuya': None, 'ha': None}
 
-    # tuya (allow entity_id as fallback identifier per user request)
-    device_id = br.get('device_id') or br.get('tuya_device') or br.get('entity_id')
+    # Priorizar entity_id si parece una entidad de HA (contiene punto)
+    # Esto permite que el control vía HA funcione correctamente desde la UI
+    entity_id = br.get('entity_id')
+    if entity_id and '.' in str(entity_id):
+        device_id = entity_id
+        print(f"set_breaker: using HA entity_id={entity_id} for breaker {breaker_id}")
+    else:
+        device_id = (br.get('device_id') or br.get('tuya_device') or br.get('tuya_id') or br.get('tuya') or entity_id)
+        print(f"set_breaker: using device_id={device_id} for breaker {breaker_id} (not HA entity)")
+    if not device_id:
+        print(f"set_breaker: no device identifier found for breaker {breaker_id}; breaker data keys={list(br.keys())}")
     action = 'encender' if state else 'apagar'
     tuya_res = await _run_tuya_action(device_id or '', action)
     # normalize older 'ok' key if present
@@ -148,9 +157,14 @@ async def toggle_breaker_service(path: str, breaker_id: str) -> Dict[str, Any]:
     updated = set_breaker_state(path, breaker_id, new_state)
     if not updated:
         return {'ok': False, 'error': 'failed_to_persist'}
-    # call tuya/ha for the new state
-    device_for_tuya = updated.get('device_id') or updated.get('tuya_device') or updated.get('entity_id') or ''
-    print(f"breaker_service.toggle: using device_for_tuya={device_for_tuya}")
+    # Priorizar entity_id si es una entidad de HA válida
+    entity_id = updated.get('entity_id')
+    if entity_id and '.' in str(entity_id):
+        device_for_tuya = entity_id
+        print(f"breaker_service.toggle: using HA entity_id={entity_id} for breaker {breaker_id} -> {new_state}")
+    else:
+        device_for_tuya = (updated.get('device_id') or updated.get('tuya_device') or updated.get('tuya_id') or updated.get('tuya') or entity_id or '')
+        print(f"breaker_service.toggle: using device_for_tuya={device_for_tuya} (not HA entity) for breaker {breaker_id} -> {new_state}")
     tuya = await _run_tuya_action(device_for_tuya, 'encender' if new_state else 'apagar')
     if isinstance(tuya, dict) and 'ok' in tuya:
         tuya['success'] = bool(tuya.pop('ok'))
@@ -178,8 +192,14 @@ async def pulse_breaker_service(path: str, breaker_id: str, duration_ms: int = 5
     br = get_breaker(path, breaker_id)
     if not br:
         return {'ok': False, 'error': 'unknown_breaker'}
-    device_id = br.get('device_id') or br.get('tuya_device') or br.get('entity_id') or ''
-    print(f"breaker_service.pulse: device_id={device_id} duration_ms={duration_ms}")
+    # Priorizar entity_id si es una entidad de HA válida
+    entity_id = br.get('entity_id')
+    if entity_id and '.' in str(entity_id):
+        device_id = entity_id
+        print(f"breaker_service.pulse: using HA entity_id={entity_id} duration_ms={duration_ms} (breaker id={breaker_id})")
+    else:
+        device_id = (br.get('device_id') or br.get('tuya_device') or br.get('tuya_id') or br.get('tuya') or entity_id or '')
+        print(f"breaker_service.pulse: using device_id={device_id} (not HA entity) duration_ms={duration_ms} (breaker id={breaker_id})")
     tuya_res = await _run_tuya_pulse(device_id, duration_ms)
     print(f"breaker_service.pulse: tuya_res={tuya_res}")
     return {'ok': True, 'breaker': br, 'tuya': tuya_res}
