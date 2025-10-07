@@ -81,7 +81,7 @@
       "current": 0.0,
       "power": 0.0,
       "consumption_last_ws": 4.0,
-      "usos_profe": 1,
+      "usos_profe": 3,
       "usos_ia": 1,
       "usando_ia_desde": null,
       "usando_profe_desde": null,
@@ -110,6 +110,10 @@
       "voltage": 0,
       "current": 0.0,
       "energy": 0.01,
+      "usos_profe": 3,
+      "usos_ia": 1,
+      "usando_ia_desde": null,
+      "usando_profe_desde": 1759877242644,
       "power": 0.0
     },
     {
@@ -132,6 +136,10 @@
         "sensor.liceo_3_potencia_de_la_fase_c",
         "sensor.liceo_3_tension_de_la_fase_c"
       ],
+      "usos_profe": 2,
+      "usos_ia": 1,
+      "usando_ia_desde": null,
+      "usando_profe_desde": null,
       "voltage": 0
     },
     {
@@ -154,6 +162,10 @@
         "sensor.liceo_4_potencia_de_la_fase_c",
         "sensor.liceo_4_tension_de_la_fase_c"
       ],
+      "usos_profe": 2,
+      "usos_ia": 1,
+      "usando_ia_desde": null,
+      "usando_profe_desde": null,
       "voltage": 0
     },
     {
@@ -176,7 +188,7 @@
         "sensor.liceo_5_potencia_de_la_fase_c",
         "sensor.liceo_5_tension_de_la_fase_c"
       ],
-      "voltage": 234.3,
+      "voltage": 235.7,
       "energy": 0.0,
       "current": 0.0,
       "power": 0.0
@@ -314,8 +326,8 @@
       "w_por_segundo": 10,
       "last": {
         "id": "SOLAR",
-        "nfc": "45E9DAD",
-        "ts": 1759875804045
+        "nfc": "958710AD",
+        "ts": 1759876537268
       },
       "charging": [
         {
@@ -335,7 +347,7 @@
           "last": {
             "id": "SOLAR",
             "nfc": "958710AD",
-            "ts": 1759872110794
+            "ts": 1759876537268
           }
         },
         {

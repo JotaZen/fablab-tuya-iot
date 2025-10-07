@@ -64,6 +64,7 @@ except Exception:
 API_KEY = os.environ.get('API_KEY')
 BASE_DIR = os.path.dirname(__file__)
 DATA_PATH = os.path.join(BASE_DIR, 'data.json')
+USAGE_LIMITS_PATH = os.path.join(BASE_DIR, 'usage_limits.json')
 HA_URL = CFG_HA_URL
 HA_TOKEN = CFG_HA_TOKEN
 HA_WS = os.getenv('HA_WS') or (HA_URL.replace('http', 'ws') + '/api/websocket')
@@ -94,6 +95,37 @@ def load_models():
             return json.load(f)
     except Exception:
         return {"tarjetas": [], "breakers": [], "arduinos": []}
+
+
+def load_usage_limits():
+    """Cargar límites de uso desde usage_limits.json"""
+    try:
+        with open(USAGE_LIMITS_PATH, 'r', encoding='utf8') as f:
+            data = json.load(f)
+            return data.get('limites', {
+                'tiempo_profe_segundos': 1800,
+                'tiempo_ia_segundos': 900,
+                'max_usos_profe': 5,
+                'max_usos_ia': 3
+            })
+    except Exception:
+        return {
+            'tiempo_profe_segundos': 1800,
+            'tiempo_ia_segundos': 900,
+            'max_usos_profe': 5,
+            'max_usos_ia': 3
+        }
+
+
+def save_usage_limits(limits: dict):
+    """Guardar límites de uso en usage_limits.json"""
+    try:
+        with open(USAGE_LIMITS_PATH, 'w', encoding='utf8') as f:
+            json.dump({'limites': limits}, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print('save_usage_limits error', e)
+        return False
 
 
 def save_models(models: dict):
@@ -137,16 +169,17 @@ async def watch_data_file(app):
     except Exception:
         prev = None
     while True:
-        await asyncio.sleep(1)
+        await asyncio.sleep(5)  # Reducido a 5 segundos para menos carga
         # cargar siempre: en Windows la resolución de mtime puede ser gruesa y perder cambios rápidos
         try:
             models = load_models()
         except Exception:
             continue
-        # diffs de tarjetas (saldo)
+        # diffs de tarjetas (saldo) - solo broadcast si hay cambios
         try:
             prev_t = {t.get('id'): t for t in (prev.get('tarjetas', []) if prev else [])}
             cur_t = {t.get('id'): t for t in models.get('tarjetas', [])}
+            has_changes = False
             for tid, cur in cur_t.items():
                 pv = prev_t.get(tid)
                 if pv is None:
@@ -154,13 +187,15 @@ async def watch_data_file(app):
                 try:
                     if float(cur.get('saldo') or 0.0) != float(pv.get('saldo') or 0.0):
                         asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': tid, 'tarjeta': cur}))
+                        has_changes = True
                 except Exception:
                     pass
             prev = models
         except Exception:
             prev = models
-        # broadcast completo del modelo
-        await state.broadcast({'type': 'models', 'data': models})
+        # broadcast completo del modelo SOLO si hay clientes conectados y no se envió tarjetas:update
+        if state.websockets and not has_changes:
+            await state.broadcast({'type': 'models', 'data': models})
 
 
 async def index(request):
@@ -698,8 +733,125 @@ async def breakers_consumption_handler(request):
     return web.json_response({'ok': True, 'breakers': out})
 
 
+async def usage_limits_handler(request):
+    """GET /usage-limits - Obtener límites de uso configurados"""
+    limits = load_usage_limits()
+    return web.json_response({'ok': True, 'limits': limits})
+
+
+async def usage_limits_update_handler(request):
+    """POST /usage-limits - Actualizar límites de uso"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = dict(await request.post())
+    
+    limits = load_usage_limits()
+    
+    # Actualizar solo los campos proporcionados
+    if 'tiempo_profe_segundos' in body:
+        limits['tiempo_profe_segundos'] = int(body['tiempo_profe_segundos'])
+    if 'tiempo_ia_segundos' in body:
+        limits['tiempo_ia_segundos'] = int(body['tiempo_ia_segundos'])
+    if 'max_usos_profe' in body:
+        limits['max_usos_profe'] = int(body['max_usos_profe'])
+    if 'max_usos_ia' in body:
+        limits['max_usos_ia'] = int(body['max_usos_ia'])
+    
+    if save_usage_limits(limits):
+        asyncio.create_task(state.broadcast({'type': 'usage_limits:update', 'limits': limits}))
+        return web.json_response({'ok': True, 'limits': limits})
+    else:
+        return web.json_response({'ok': False, 'error': 'save failed'}, status=500)
+
+
+async def breaker_usage_handler(request):
+    """GET /breakers/{id}/usage - Obtener información de uso de un breaker"""
+    bid = request.match_info.get('id')
+    br = get_breaker(DATA_PATH, bid)
+    if not br:
+        return web.json_response({'ok': False, 'error': 'unknown breaker'}, status=404)
+    
+    usage = {
+        'id': bid,
+        'usos_profe': br.get('usos_profe', 0),
+        'usos_ia': br.get('usos_ia', 0),
+        'usando_ia_desde': br.get('usando_ia_desde'),
+        'usando_profe_desde': br.get('usando_profe_desde'),
+    }
+    
+    return web.json_response({'ok': True, 'usage': usage})
+
+
+async def breaker_usage_update_handler(request):
+    """POST /breakers/{id}/usage - Actualizar contadores de uso de un breaker
+    
+    Body: {
+        "usos_profe": 2,
+        "usos_ia": 1,
+        "usando_ia_desde": timestamp_ms o null,
+        "usando_profe_desde": timestamp_ms o null
+    }
+    """
+    bid = request.match_info.get('id')
+    br = get_breaker(DATA_PATH, bid)
+    if not br:
+        return web.json_response({'ok': False, 'error': 'unknown breaker'}, status=404)
+    
+    try:
+        body = await request.json()
+    except Exception:
+        body = dict(await request.post())
+    
+    fields = {}
+    if 'usos_profe' in body:
+        fields['usos_profe'] = int(body['usos_profe'])
+    if 'usos_ia' in body:
+        fields['usos_ia'] = int(body['usos_ia'])
+    if 'usando_ia_desde' in body:
+        val = body['usando_ia_desde']
+        fields['usando_ia_desde'] = int(val) if val is not None else None
+    if 'usando_profe_desde' in body:
+        val = body['usando_profe_desde']
+        fields['usando_profe_desde'] = int(val) if val is not None else None
+    
+    if fields:
+        update_breaker_fields(DATA_PATH, bid, **fields)
+        asyncio.create_task(state.broadcast({'type': 'breakers:usage_update', 'id': bid, **fields}))
+        return web.json_response({'ok': True, 'id': bid, 'updated': fields})
+    else:
+        return web.json_response({'ok': False, 'error': 'no fields to update'}, status=400)
+
+
+async def breaker_usage_reset_handler(request):
+    """POST /breakers/{id}/usage/reset - Resetear contadores de uso de un breaker
+    
+    Query params:
+        ?type=profe o ?type=ia o ambos si se omite
+    """
+    bid = request.match_info.get('id')
+    br = get_breaker(DATA_PATH, bid)
+    if not br:
+        return web.json_response({'ok': False, 'error': 'unknown breaker'}, status=404)
+    
+    reset_type = request.query.get('type', 'all')
+    
+    fields = {}
+    if reset_type in ('all', 'profe'):
+        fields['usos_profe'] = 0
+        fields['usando_profe_desde'] = None
+    if reset_type in ('all', 'ia'):
+        fields['usos_ia'] = 0
+        fields['usando_ia_desde'] = None
+    
+    update_breaker_fields(DATA_PATH, bid, **fields)
+    asyncio.create_task(state.broadcast({'type': 'breakers:usage_update', 'id': bid, **fields}))
+    
+    return web.json_response({'ok': True, 'id': bid, 'reset': reset_type, 'fields': fields})
+
+
 _last_tick_time = 0  # timestamp del último tick procesado
-_tick_min_interval = 0.8  # mínimo intervalo entre ticks (segundos)
+_tick_min_interval = 2.0  # mínimo intervalo entre ticks (segundos) - aumentado para reducir carga
 
 async def breakers_tick_consumption_handler(request):
     """Procesa consumo de todos los breakers en una sola llamada optimizada.
@@ -1057,8 +1209,16 @@ def make_app():
     app.router.add_post('/breakers/{id}/refresh', breaker_refresh_handler)
     app.router.add_get('/breakers/consumption', breakers_consumption_handler)
     app.router.add_post('/breakers/tick-consumption', breakers_tick_consumption_handler)
+    # Rutas de uso/límites
+    app.router.add_get('/usage-limits', usage_limits_handler)
+    app.router.add_post('/usage-limits', usage_limits_update_handler)
+    app.router.add_get('/breakers/{id}/usage', breaker_usage_handler)
+    app.router.add_post('/breakers/{id}/usage', breaker_usage_update_handler)
+    app.router.add_post('/breakers/{id}/usage/reset', breaker_usage_reset_handler)
     # Exponer endpoint para actualizar saldo de tarjetas desde la UI
     app.router.add_post('/tarjetas/{id}/saldo', tarjeta_update_saldo)
+    # Ruta adicional para ajustar saldo (delta)
+    app.router.add_post('/tarjetas/{id}/ajuste', tarjeta_adjust_saldo)
     # static
     static_dir = os.path.join(BASE_DIR, 'static')
     app.router.add_static('/static/', static_dir, show_index=True)

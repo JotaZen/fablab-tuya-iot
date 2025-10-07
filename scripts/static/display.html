@@ -450,6 +450,98 @@
         color: rgba(255, 255, 255, 0.7);
         margin-left: 5px;
       }
+
+      /* Tarjetas de uso */
+      .usage-cards {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .usage-card {
+        flex: 1;
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 8px;
+        padding: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+      }
+
+      .usage-card.profe {
+        border-color: rgba(100, 200, 255, 0.5);
+      }
+
+      .usage-card.ia {
+        border-color: rgba(200, 100, 255, 0.5);
+      }
+
+      .usage-card-header {
+        font-size: 0.65rem;
+        color: rgba(255, 255, 255, 0.7);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 5px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .usage-card.profe .usage-card-header {
+        color: #64c8ff;
+      }
+
+      .usage-card.ia .usage-card-header {
+        color: #c864ff;
+      }
+
+      .usage-count {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #fff;
+        margin-bottom: 3px;
+      }
+
+      .usage-timer {
+        font-size: 1.1rem;
+        font-weight: 700;
+        font-family: "Courier New", monospace;
+        letter-spacing: 1px;
+      }
+
+      .usage-timer.active {
+        color: #00ff88;
+        text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+        animation: pulse 1s ease-in-out infinite;
+      }
+
+      .usage-timer.inactive {
+        color: rgba(255, 255, 255, 0.3);
+      }
+
+      .usage-timer.warning {
+        color: #ff9900;
+        text-shadow: 0 0 10px rgba(255, 153, 0, 0.5);
+      }
+
+      .usage-timer.critical {
+        color: #ff3366;
+        text-shadow: 0 0 10px rgba(255, 51, 102, 0.5);
+        animation: criticalPulse 0.5s ease-in-out infinite;
+      }
+
+      @keyframes criticalPulse {
+        0%, 100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.6;
+        }
+      }
+
+      .usage-limit {
+        font-size: 0.6rem;
+        color: rgba(255, 255, 255, 0.5);
+        margin-top: 2px;
+      }
     </style>
   </head>
   <body>
@@ -508,6 +600,12 @@
 
       let currentModels = { breakers: [], tarjetas: [], arduinos: [] };
       let isConnected = false;
+      let usageLimits = {
+        tiempo_profe_segundos: 1800,
+        tiempo_ia_segundos: 900,
+        max_usos_profe: 5,
+        max_usos_ia: 3
+      };
 
       ws.onopen = () => {
         isConnected = true;
@@ -559,6 +657,18 @@
             Object.assign(tarjeta, data.tarjeta);
             renderDisplay();
           }
+        } else if (data.type === "breakers:usage_update") {
+          const breaker = currentModels.breakers.find((b) => b.id === data.id);
+          if (breaker) {
+            if ("usos_profe" in data) breaker.usos_profe = data.usos_profe;
+            if ("usos_ia" in data) breaker.usos_ia = data.usos_ia;
+            if ("usando_profe_desde" in data) breaker.usando_profe_desde = data.usando_profe_desde;
+            if ("usando_ia_desde" in data) breaker.usando_ia_desde = data.usando_ia_desde;
+            renderDisplay();
+          }
+        } else if (data.type === "usage_limits:update") {
+          usageLimits = data.limits;
+          renderDisplay();
         }
       }
 
@@ -572,6 +682,20 @@
           dot.classList.add("disconnected");
           text.textContent = "Desconectado";
         }
+      }
+
+      function formatTime(seconds) {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      }
+
+      function getTimeRemaining(startedMs, limitSeconds) {
+        if (!startedMs) return null;
+        const now = Date.now();
+        const elapsedSeconds = Math.floor((now - startedMs) / 1000);
+        const remaining = Math.max(0, limitSeconds - elapsedSeconds);
+        return remaining;
       }
 
       function renderDisplay() {
@@ -658,6 +782,31 @@
             `;
           } else {
             // Vista normal para breakers
+            const usosProfe = breaker.usos_profe || 0;
+            const usosIa = breaker.usos_ia || 0;
+            const usandoProfeDesde = breaker.usando_profe_desde;
+            const usandoIaDesde = breaker.usando_ia_desde;
+
+            // Calcular tiempos restantes
+            const tiempoProfeRestante = getTimeRemaining(usandoProfeDesde, usageLimits.tiempo_profe_segundos);
+            const tiempoIaRestante = getTimeRemaining(usandoIaDesde, usageLimits.tiempo_ia_segundos);
+
+            // Determinar clases de tiempo
+            let timerProfeClass = 'inactive';
+            let timerIaClass = 'inactive';
+            
+            if (tiempoProfeRestante !== null) {
+              if (tiempoProfeRestante <= 60) timerProfeClass = 'critical';
+              else if (tiempoProfeRestante <= 300) timerProfeClass = 'warning';
+              else timerProfeClass = 'active';
+            }
+            
+            if (tiempoIaRestante !== null) {
+              if (tiempoIaRestante <= 30) timerIaClass = 'critical';
+              else if (tiempoIaRestante <= 120) timerIaClass = 'warning';
+              else timerIaClass = 'active';
+            }
+
             card.innerHTML = `
               <div class="breaker-header">
                 <div class="breaker-name">${breaker.nombre || "Breaker"}</div>
@@ -682,6 +831,25 @@
                   <div class="${progressClass}" style="width: ${energiaPercent}%"></div>
                 </div>
               </div>
+
+              <div class="usage-cards">
+                <div class="usage-card profe">
+                  <div class="usage-card-header">👨‍🏫 Profe</div>
+                  <div class="usage-count">${usosProfe}/${usageLimits.max_usos_profe} usos</div>
+                  <div class="usage-timer ${timerProfeClass}" data-type="profe" data-breaker="${breaker.id}">
+                    ${tiempoProfeRestante !== null ? formatTime(tiempoProfeRestante) : '--:--'}
+                  </div>
+                  <div class="usage-limit">${Math.floor(usageLimits.tiempo_profe_segundos/60)}min límite</div>
+                </div>
+                <div class="usage-card ia">
+                  <div class="usage-card-header">🤖 IA</div>
+                  <div class="usage-count">${usosIa}/${usageLimits.max_usos_ia} usos</div>
+                  <div class="usage-timer ${timerIaClass}" data-type="ia" data-breaker="${breaker.id}">
+                    ${tiempoIaRestante !== null ? formatTime(tiempoIaRestante) : '--:--'}
+                  </div>
+                  <div class="usage-limit">${Math.floor(usageLimits.tiempo_ia_segundos/60)}min límite</div>
+                </div>
+              </div>
             `;
           }
 
@@ -704,56 +872,71 @@
         document.getElementById("timestamp").textContent = `Última actualización: ${formatted}`;
       }
 
-      // Fetch inicial
+      // Fetch inicial - SOLO UNA VEZ al cargar
       async function fetchInitialData() {
         try {
           const response = await fetch("/models");
           const data = await response.json();
           currentModels = data;
+          
+          // Cargar límites
+          const limitsResponse = await fetch("/usage-limits");
+          const limitsData = await limitsResponse.json();
+          if (limitsData.ok && limitsData.limits) {
+            usageLimits = limitsData.limits;
+          }
+          
           renderDisplay();
         } catch (e) {
           console.error("Error fetching initial data:", e);
         }
       }
 
-      setInterval(fetchInitialData, 5000);
-      fetchInitialData();
-      setInterval(updateTimestamp, 1000);
-
-      // Tick automático
-      let lastTick = Date.now();
-      let tickInProgress = false;
-
-      async function tickConsumption() {
-        if (tickInProgress) return;
-
-        const now = Date.now();
-        const elapsed = (now - lastTick) / 1000;
-
-        if (elapsed < 0.8) return;
-
-        tickInProgress = true;
-        lastTick = now;
-
-        try {
-          const response = await fetch("/breakers/tick-consumption", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ elapsed }),
-          });
-
-          if (response.ok) {
-            const result = await response.json();
-            console.log(`[Tick] Procesados ${result.processed} breakers`);
+      // Actualizar temporizadores cada segundo sin re-renderizar todo
+      function updateTimers() {
+        document.querySelectorAll('.usage-timer').forEach(timer => {
+          const type = timer.dataset.type;
+          const breakerId = timer.dataset.breaker;
+          const breaker = currentModels.breakers.find(b => b.id === breakerId);
+          
+          if (!breaker) return;
+          
+          const usandoDesde = type === 'profe' ? breaker.usando_profe_desde : breaker.usando_ia_desde;
+          const limitSeconds = type === 'profe' ? usageLimits.tiempo_profe_segundos : usageLimits.tiempo_ia_segundos;
+          
+          const remaining = getTimeRemaining(usandoDesde, limitSeconds);
+          
+          if (remaining !== null) {
+            timer.textContent = formatTime(remaining);
+            
+            // Actualizar clases
+            timer.classList.remove('active', 'warning', 'critical', 'inactive');
+            if (type === 'profe') {
+              if (remaining <= 60) timer.classList.add('critical');
+              else if (remaining <= 300) timer.classList.add('warning');
+              else timer.classList.add('active');
+            } else {
+              if (remaining <= 30) timer.classList.add('critical');
+              else if (remaining <= 120) timer.classList.add('warning');
+              else timer.classList.add('active');
+            }
+          } else {
+            timer.textContent = '--:--';
+            timer.classList.remove('active', 'warning', 'critical');
+            timer.classList.add('inactive');
           }
-        } catch (e) {
-          console.error("[Tick] Error:", e);
-        } finally {
-          tickInProgress = false;
-        }
+        });
       }
 
-      setInterval(tickConsumption, 1000);
+      // ✅ FETCH INICIAL SOLO UNA VEZ - WebSocket maneja el resto
+      fetchInitialData();
+      
+      // ✅ Solo actualizar UI local cada segundo (sin HTTP)
+      setInterval(updateTimestamp, 1000);
+      setInterval(updateTimers, 1000);
+
+      // ❌ TICK AUTOMÁTICO DESHABILITADO - El index.html ya lo hace
+      // No hacer tick desde display para evitar duplicados
     </script>
   </body>
 </html>

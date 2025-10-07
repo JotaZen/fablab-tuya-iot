@@ -102,6 +102,32 @@ else
 fi
 echo ""
 
+# Crear archivo usage_limits.json si no existe
+if [ ! -f "scripts/usage_limits.json" ]; then
+    echo "📝 Creando scripts/usage_limits.json inicial..."
+    mkdir -p scripts
+    cat > scripts/usage_limits.json << 'EOF'
+{
+  "limites": {
+    "tiempo_profe_segundos": 1800,
+    "tiempo_ia_segundos": 900,
+    "max_usos_profe": 5,
+    "max_usos_ia": 3
+  }
+}
+EOF
+    echo "✓ scripts/usage_limits.json creado"
+    echo ""
+    echo "⚙️  Límites de uso configurados:"
+    echo "   - Tiempo Profesor: 30 minutos (1800s)"
+    echo "   - Tiempo IA: 15 minutos (900s)"
+    echo "   - Usos máximos Profesor: 5"
+    echo "   - Usos máximos IA: 3"
+else
+    echo "✓ scripts/usage_limits.json ya existe"
+fi
+echo ""
+
 # Crear archivo .env de ejemplo si no existe
 if [ ! -f ".env" ]; then
     echo "📝 Creando archivo .env de ejemplo..."

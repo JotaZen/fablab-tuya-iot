@@ -85,12 +85,43 @@
       .btn.secondary {
         background: #6c757d;
       }
+      .btn.success {
+        background: #28a745;
+      }
+      .btn.warning {
+        background: #ffc107;
+        color: #000;
+      }
+      .btn.danger {
+        background: #dc3545;
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
       .controls {
         margin-top: 8px;
       }
       #events pre,
       #tuyastatus {
         font-size: 12px;
+      }
+      .usage-card {
+        background: #fff3cd;
+        border-left: 3px solid #ffc107;
+        padding: 8px;
+        border-radius: 4px;
+        margin-top: 8px;
+      }
+      .timer-display {
+        font-size: 18px;
+        font-weight: bold;
+        color: #ff6b6b;
+        font-family: monospace;
+      }
+      .timer-active {
+        background: #d4edda;
+        border-left-color: #28a745;
       }
     </style>
   </head>
@@ -290,6 +321,39 @@
             (estado === "on" ? "ON" : "OFF") +
             "</span></div></div>";
 
+          // Generar bloque de uso/temporizador
+          const usosProfe = br.usos_profe || 0;
+          const usosIA = br.usos_ia || 0;
+          const usandoProfeDesde = br.usando_profe_desde;
+          const usandoIADesde = br.usando_ia_desde;
+          
+          let usageHtml = '';
+          if (usandoProfeDesde || usandoIADesde || usosProfe > 0 || usosIA > 0) {
+            const isActiveProfe = !!usandoProfeDesde;
+            const isActiveIA = !!usandoIADesde;
+            usageHtml = '<div class="usage-card ' + 
+              (isActiveProfe || isActiveIA ? 'timer-active' : '') + 
+              '" data-usage-card="' + br.id + '">' +
+              '<div class="muted small"><strong>📊 Control de Uso</strong></div>' +
+              '<div class="small">Profe: ' + usosProfe + ' usos' +
+              (isActiveProfe ? ' <span class="timer-display" data-timer-profe="' + br.id + '">⏱️ --:--</span>' : '') +
+              '</div>' +
+              '<div class="small">IA: ' + usosIA + ' usos' +
+              (isActiveIA ? ' <span class="timer-display" data-timer-ia="' + br.id + '">⏱️ --:--</span>' : '') +
+              '</div>' +
+              '<div style="margin-top:6px">' +
+              '<button class="btn success small btn-start-timer" data-bid="' + br.id + '" data-type="profe" ' +
+              (isActiveProfe ? 'disabled' : '') + '>▶️ Iniciar Profe</button> ' +
+              '<button class="btn warning small btn-start-timer" data-bid="' + br.id + '" data-type="ia" ' +
+              (isActiveIA ? 'disabled' : '') + '>▶️ Iniciar IA</button><br/>' +
+              '<button class="btn danger small btn-stop-timer" data-bid="' + br.id + '" data-type="profe" ' +
+              (!isActiveProfe ? 'disabled' : '') + '>⏹️ Detener Profe</button> ' +
+              '<button class="btn danger small btn-stop-timer" data-bid="' + br.id + '" data-type="ia" ' +
+              (!isActiveIA ? 'disabled' : '') + '>⏹️ Detener IA</button> ' +
+              '<button class="btn secondary small btn-reset-usage" data-bid="' + br.id + '">🔄 Reset</button>' +
+              '</div></div>';
+          }
+
           const body =
             hdr +
             '<div class="muted">' +
@@ -330,6 +394,7 @@
                 "</div>"
               : '<div class="muted">Sin tarjeta asignada</div>') +
             "</div>" +
+            usageHtml +
             '<div class="controls">' +
             '<button data-id="' +
             br.id +
@@ -505,6 +570,66 @@
               editBtn.style.display = "";
             }
             editingSaldoBid = null;
+          } else if (target.matches(".btn-start-timer")) {
+            // Iniciar temporizador
+            const bid = target.getAttribute("data-bid");
+            const type = target.getAttribute("data-type"); // 'profe' o 'ia'
+            
+            const res = await fetch(
+              "/breakers/" + encodeURIComponent(bid) + "/usage",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  [`usando_${type}_desde`]: Date.now()
+                }),
+              }
+            ).then((r) => r.json());
+            
+            logEvent(res);
+            if (res.ok) {
+              fetchModels();
+            }
+          } else if (target.matches(".btn-stop-timer")) {
+            // Detener temporizador y consumir un uso
+            const bid = target.getAttribute("data-bid");
+            const type = target.getAttribute("data-type"); // 'profe' o 'ia'
+            const br = (currentModels.breakers || []).find((x) => x.id === bid);
+            
+            if (br) {
+              const currentUsos = br[`usos_${type}`] || 0;
+              const res = await fetch(
+                "/breakers/" + encodeURIComponent(bid) + "/usage",
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    [`usos_${type}`]: currentUsos + 1,
+                    [`usando_${type}_desde`]: null
+                  }),
+                }
+              ).then((r) => r.json());
+              
+              logEvent(res);
+              if (res.ok) {
+                fetchModels();
+              }
+            }
+          } else if (target.matches(".btn-reset-usage")) {
+            // Resetear contadores de uso
+            const bid = target.getAttribute("data-bid");
+            
+            if (confirm('¿Resetear todos los contadores de uso de este breaker?')) {
+              const res = await fetch(
+                "/breakers/" + encodeURIComponent(bid) + "/usage/reset",
+                { method: "POST" }
+              ).then((r) => r.json());
+              
+              logEvent(res);
+              if (res.ok) {
+                fetchModels();
+              }
+            }
           }
         });
       }
@@ -528,6 +653,19 @@
             if ("voltage" in obj) br.voltage = obj.voltage;
             if ("current" in obj) br.current = obj.current;
             if ("ws" in obj) br.consumption_last_ws = obj.ws;
+            updateBreakerCard(br.id);
+          } else {
+            fetchModels();
+          }
+        }
+        // Handler para actualización de uso/temporizadores
+        if (obj && obj.type === "breakers:usage_update") {
+          const br = currentModels.breakers.find((x) => x.id === obj.id);
+          if (br) {
+            if ("usos_profe" in obj) br.usos_profe = obj.usos_profe;
+            if ("usos_ia" in obj) br.usos_ia = obj.usos_ia;
+            if ("usando_profe_desde" in obj) br.usando_profe_desde = obj.usando_profe_desde;
+            if ("usando_ia_desde" in obj) br.usando_ia_desde = obj.usando_ia_desde;
             updateBreakerCard(br.id);
           } else {
             fetchModels();
@@ -646,9 +784,9 @@
 
       // carga inicial y refresco periódico
       fetchModels();
-      setInterval(fetchModels, 5000);
+      setInterval(fetchModels, 10000); // Aumentado a 10 segundos
 
-      // Tick de consumo optimizado: una sola petición por segundo para todos los breakers
+      // Tick de consumo optimizado: una sola petición cada 2 segundos para todos los breakers
       let tickInProgress = false;
       setInterval(async () => {
         try {
@@ -659,7 +797,7 @@
           if (!currentModels || !Array.isArray(currentModels.breakers)) return;
           if (editingSaldoBid) return; // no operar durante edición manual
 
-          const elapsed = 1.0; // 1s
+          const elapsed = 2.0; // 2 segundos - reducido de 1s
           tickInProgress = true;
 
           // Llamada única al servidor para procesar todos los breakers
@@ -695,7 +833,35 @@
         } finally {
           tickInProgress = false;
         }
-      }, 1000);
+      }, 2000); // Aumentado a 2 segundos
+      
+      // Actualizar temporizadores cada segundo
+      function updateTimers() {
+        const now = Date.now();
+        currentModels.breakers.forEach((br) => {
+          if (br.usando_profe_desde) {
+            const timerEl = document.querySelector('[data-timer-profe="' + br.id + '"]');
+            if (timerEl) {
+              const elapsed = Math.floor((now - br.usando_profe_desde) / 1000);
+              const mins = Math.floor(elapsed / 60);
+              const secs = elapsed % 60;
+              timerEl.textContent = `⏱️ ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            }
+          }
+          if (br.usando_ia_desde) {
+            const timerEl = document.querySelector('[data-timer-ia="' + br.id + '"]');
+            if (timerEl) {
+              const elapsed = Math.floor((now - br.usando_ia_desde) / 1000);
+              const mins = Math.floor(elapsed / 60);
+              const secs = elapsed % 60;
+              timerEl.textContent = `⏱️ ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            }
+          }
+        });
+      }
+      
+      setInterval(updateTimers, 1000); // Este se mantiene en 1s para los temporizadores visuales
+      
       ws.onopen = () => {
         logEvent({ type: "info", msg: "conectado ws" });
         logTuya({ type: "info", msg: "ws conectado" });
