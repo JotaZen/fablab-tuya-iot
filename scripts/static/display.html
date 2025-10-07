@@ -542,6 +542,29 @@
         color: rgba(255, 255, 255, 0.5);
         margin-top: 2px;
       }
+
+      /* Logo de la tarjeta */
+      .card-logo {
+        margin-top: 12px;
+        text-align: center;
+        padding: 8px;
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .card-logo img {
+        max-width: 100%;
+        height: auto;
+        max-height: 80px;
+        border-radius: 8px;
+        opacity: 0.9;
+        transition: opacity 0.3s ease;
+      }
+
+      .card-logo img:hover {
+        opacity: 1;
+      }
     </style>
   </head>
   <body>
@@ -723,7 +746,7 @@
         const grid = document.getElementById("breakersGrid");
         grid.innerHTML = "";
 
-        breakers.forEach((breaker) => {
+        breakers.forEach((breaker, index) => {
           const tarjeta = tarjetas.find((t) => t.id === breaker.tarjeta);
           const energia = tarjeta ? parseFloat(tarjeta.saldo || 0) : 0;
           const maxEnergia = 200000;
@@ -766,6 +789,9 @@
           const card = document.createElement("div");
           card.className = cardClass;
 
+          // Asignar número secuencial (1-9) basado en el índice
+          const logoNumber = index + 1;
+
           if (isCharging) {
             // Vista especial para tarjetas en carga
             card.innerHTML = `
@@ -779,6 +805,7 @@
                   ${Math.round(energia/1000).toLocaleString()}<span class="energy-unit">KW</span>
                 </div>
               </div>
+              <div class="card-logo"><img src="/static/logos/${logoNumber}.jpg" alt="Logo ${logoNumber}" onerror="this.style.display='none'"></div>
             `;
           } else {
             // Vista normal para breakers
@@ -850,6 +877,8 @@
                   <div class="usage-limit">${Math.floor(usageLimits.tiempo_ia_segundos/60)}min límite</div>
                 </div>
               </div>
+
+              <div class="card-logo"><img src="/static/logos/${logoNumber}.jpg" alt="Logo ${logoNumber}" onerror="this.style.display='none'"></div>
             `;
           }
 
