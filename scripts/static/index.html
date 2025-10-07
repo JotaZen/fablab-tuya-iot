@@ -99,6 +99,17 @@
         opacity: 0.5;
         cursor: not-allowed;
       }
+      
+      /* Tarjeta en carga */
+      .charging-card {
+        border: 2px solid #ffc107;
+        box-shadow: 0 0 10px rgba(255, 193, 7, 0.3);
+      }
+      
+      .tiny {
+        font-size: 10px;
+        font-style: italic;
+      }
       .controls {
         margin-top: 8px;
       }
@@ -468,15 +479,74 @@
         if (tarjetasDiv) {
           tarjetasDiv.innerHTML = "";
           (data.tarjetas || []).forEach((t) => {
+            // Calcular carga actual si está en alguna estación
+            let cargaActual = 0;
+            let cargaAcumulada = t.carga_acumulada || 0;
+            let arduinoId = null;
+            (data.arduinos || []).forEach((arduino) => {
+              if (!arduino.es_estacion_carga) return;
+              const charging = arduino.charging || [];
+              charging.forEach((sess) => {
+                if (sess.uid === t.id) {
+                  const wps = sess.wps || 0;
+                  const startedMs = sess.started_ms || Date.now();
+                  const elapsedS = (Date.now() - startedMs) / 1000;
+                  cargaActual = wps * elapsedS;
+                  arduinoId = arduino.id;
+                }
+              });
+            });
+
+            // Calcular progreso de carga
+            const maxCarga = usageLimits?.max_carga_por_tarjeta || 2000;
+            const cargaTotalPendiente = cargaAcumulada + cargaActual;
+            const cargaLimitada = Math.min(cargaTotalPendiente, maxCarga);
+            const porcentajeCarga = (cargaLimitada / maxCarga) * 100;
+
             const el = document.createElement("div");
-            el.className = "card";
+            el.className = "card" + (cargaActual > 0 ? " charging-card" : "");
             el.innerHTML =
               '<div class="hdr"><div><strong>Tarjeta ' +
               (t.id || "") +
               '</strong><div class="muted small">ID tarjeta</div></div></div>' +
               '<div class="muted">Saldo: <strong>' +
-              (t.saldo === undefined || t.saldo === null ? "—" : t.saldo) +
-              "</strong></div>";
+              (t.saldo === undefined || t.saldo === null ? "—" : t.saldo.toFixed(2)) +
+              " W·s</strong></div>" +
+              (cargaActual > 0
+                ? '<div style="background:#fff3cd;padding:6px;border-radius:4px;margin-top:6px;">' +
+                  '<div class="muted small">⚡ Cargando en <strong>' +
+                  arduinoId +
+                  "</strong></div>" +
+                  '<div class="muted small">Carga actual: <strong class="carga-actual-' +
+                  t.id +
+                  '">' +
+                  cargaActual.toFixed(2) +
+                  " W·s</strong></div>" +
+                  '<div style="margin-top:6px;">' +
+                  '<div style="display:flex;justify-content:space-between;font-size:0.65rem;margin-bottom:3px;">' +
+                  '<span>Progreso</span>' +
+                  '<span style="font-weight:700;color:' + (porcentajeCarga >= 90 ? '#dc3545' : porcentajeCarga >= 70 ? '#ffc107' : '#28a745') + ';">' +
+                  porcentajeCarga.toFixed(1) + '%</span>' +
+                  '</div>' +
+                  '<div style="background:#ddd;height:8px;border-radius:4px;overflow:hidden;">' +
+                  '<div class="carga-progress-index-' + t.id + '" style="height:100%;width:' + porcentajeCarga + '%;' +
+                  'background:' + (porcentajeCarga >= 90 ? '#dc3545' : porcentajeCarga >= 70 ? '#ffc107' : '#28a745') + ';' +
+                  'transition:width 0.3s ease;"></div>' +
+                  '</div>' +
+                  '<div style="font-size:0.6rem;color:#666;margin-top:2px;text-align:right;">' +
+                  '<span class="carga-total-index-' + t.id + '">' + cargaLimitada.toFixed(2) + '</span> / ' + maxCarga.toFixed(0) + ' W·s' +
+                  '</div>' +
+                  '</div>' +
+                  "</div>"
+                : "") +
+              (t.carga_acumulada && t.carga_acumulada > 0
+                ? '<div style="background:#d1ecf1;padding:6px;border-radius:4px;margin-top:6px;">' +
+                  '<div class="muted small">Carga acumulada: <strong>' +
+                  t.carga_acumulada.toFixed(2) +
+                  " W·s</strong></div>" +
+                  '<div class="muted tiny">Se convertirá a saldo en próximo lector</div>' +
+                  "</div>"
+                : "");
             tarjetasDiv.appendChild(el);
           });
         }
@@ -838,6 +908,8 @@
       // Actualizar temporizadores cada segundo
       function updateTimers() {
         const now = Date.now();
+        
+        // Actualizar temporizadores de uso de breakers
         currentModels.breakers.forEach((br) => {
           if (br.usando_profe_desde) {
             const timerEl = document.querySelector('[data-timer-profe="' + br.id + '"]');
@@ -857,6 +929,58 @@
               timerEl.textContent = `⏱️ ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
             }
           }
+        });
+        
+        // Actualizar carga actual de tarjetas en tiempo real
+        const maxCarga = usageLimits?.max_carga_por_tarjeta || 2000;
+        currentModels.tarjetas.forEach((t) => {
+          const arduinos = currentModels.arduinos || [];
+          let cargaActual = 0;
+          let cargaAcumulada = t.carga_acumulada || 0;
+          
+          arduinos.forEach((arduino) => {
+            if (!arduino.es_estacion_carga) return;
+            const charging = arduino.charging || [];
+            charging.forEach((sess) => {
+              if (sess.uid === t.id) {
+                const wps = sess.wps || 0;
+                const startedMs = sess.started_ms || now;
+                const elapsedS = (now - startedMs) / 1000;
+                cargaActual = wps * elapsedS;
+                
+                // Actualizar texto de carga actual
+                const cargaEl = document.querySelector('.carga-actual-' + t.id);
+                if (cargaEl) {
+                  cargaEl.textContent = cargaActual.toFixed(2) + ' W·s';
+                }
+                
+                // Actualizar barra de progreso
+                const cargaTotalPendiente = cargaAcumulada + cargaActual;
+                const cargaLimitada = Math.min(cargaTotalPendiente, maxCarga);
+                const porcentajeCarga = (cargaLimitada / maxCarga) * 100;
+                
+                const progressBar = document.querySelector('.carga-progress-index-' + t.id);
+                if (progressBar) {
+                  progressBar.style.width = porcentajeCarga + '%';
+                  
+                  // Cambiar color según porcentaje
+                  let barColor = '#28a745';
+                  if (porcentajeCarga >= 90) {
+                    barColor = '#dc3545';
+                  } else if (porcentajeCarga >= 70) {
+                    barColor = '#ffc107';
+                  }
+                  progressBar.style.background = barColor;
+                }
+                
+                // Actualizar texto de total
+                const cargaTotalEl = document.querySelector('.carga-total-index-' + t.id);
+                if (cargaTotalEl) {
+                  cargaTotalEl.textContent = cargaLimitada.toFixed(2);
+                }
+              }
+            });
+          });
         });
       }
       

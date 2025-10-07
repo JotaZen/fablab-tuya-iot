@@ -3,6 +3,7 @@
     "tiempo_profe_segundos": 60,
     "tiempo_ia_segundos": 120,
     "max_usos_profe": 1,
-    "max_usos_ia": 3
+    "max_usos_ia": 3,
+    "max_carga_por_tarjeta": 2000
   }
 }

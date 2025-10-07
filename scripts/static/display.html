@@ -768,15 +768,78 @@
 
           if (isCharging) {
             // Vista especial para tarjetas en carga
+            // Calcular carga actual en tiempo real
+            let cargaActual = 0;
+            let cargaAcumulada = tarjeta?.carga_acumulada || 0;
+            let arduinoId = '';
+            
+            arduinos.forEach((arduino) => {
+              if (arduino.charging && Array.isArray(arduino.charging)) {
+                const sess = arduino.charging.find((c) => c.uid === tarjeta.id);
+                if (sess) {
+                  const wps = sess.wps || 0;
+                  const startedMs = sess.started_ms || Date.now();
+                  const elapsedS = (Date.now() - startedMs) / 1000;
+                  cargaActual = wps * elapsedS;
+                  arduinoId = arduino.id;
+                }
+              }
+            });
+            
+            // Calcular progreso de carga
+            const maxCarga = usageLimits.max_carga_por_tarjeta || 2000;
+            const cargaTotalPendiente = cargaAcumulada + cargaActual;
+            const cargaLimitada = Math.min(cargaTotalPendiente, maxCarga);
+            const porcentajeCarga = (cargaLimitada / maxCarga) * 100;
+            
+            // Determinar color de barra según porcentaje
+            let barColor = 'linear-gradient(90deg, #00ff88, #00d4ff)';
+            if (porcentajeCarga >= 90) {
+              barColor = 'linear-gradient(90deg, #ff3366, #ff6699)';
+            } else if (porcentajeCarga >= 70) {
+              barColor = 'linear-gradient(90deg, #ff9900, #ffaa33)';
+            }
+            
             card.innerHTML = `
               <div class="charging-header">
                 <div class="battery-icon">🔋</div>
                 <div class="tarjeta-name">${tarjeta?.nombre || "Tarjeta"}</div>
               </div>
               <div class="charging-energy">
-                <div class="energy-label">⚡ Energía Actual</div>
+                <div class="energy-label">⚡ Saldo Actual</div>
                 <div class="energy-value">
-                  ${Math.round(energia/1000).toLocaleString()}<span class="energy-unit">KW</span>
+                  ${Math.round(energia/1000).toLocaleString()}<span class="energy-unit">kW·s</span>
+                </div>
+              </div>
+              <div class="metric" style="margin-top: 10px;">
+                <div class="metric-label">Estación: ${arduinoId}</div>
+                <div class="metric-value" style="color: #ffd700;">
+                  <span class="carga-actual-display-${tarjeta.id}">${cargaActual.toFixed(2)}</span><span class="metric-unit">W·s/seg</span>
+                </div>
+              </div>
+              ${cargaAcumulada > 0 ? `
+                <div class="metric" style="margin-top: 6px; background: rgba(0, 212, 255, 0.2);">
+                  <div class="metric-label">💰 Carga Acumulada</div>
+                  <div class="metric-value" style="color: #00d4ff;">
+                    ${cargaAcumulada.toFixed(2)}<span class="metric-unit">W·s</span>
+                  </div>
+                </div>
+              ` : ''}
+              <div class="metric" style="margin-top: 10px; background: rgba(0, 0, 0, 0.3);">
+                <div class="metric-label" style="display: flex; justify-content: space-between; align-items: center;">
+                  <span>📊 Progreso de Carga</span>
+                  <span style="font-weight: 700; color: ${porcentajeCarga >= 90 ? '#ff3366' : porcentajeCarga >= 70 ? '#ff9900' : '#00ff88'};">
+                    ${porcentajeCarga.toFixed(1)}%
+                  </span>
+                </div>
+                <div class="progress-bar" style="margin-top: 8px; height: 12px;">
+                  <div class="progress-fill carga-progress-${tarjeta.id}" 
+                       style="width: ${porcentajeCarga}%; background: ${barColor};">
+                  </div>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 0.65rem; color: rgba(255, 255, 255, 0.6);">
+                  <span class="carga-total-display-${tarjeta.id}">${cargaLimitada.toFixed(2)} W·s</span>
+                  <span>${maxCarga.toFixed(0)} W·s máx</span>
                 </div>
               </div>
             `;
@@ -894,6 +957,7 @@
 
       // Actualizar temporizadores cada segundo sin re-renderizar todo
       function updateTimers() {
+        // Actualizar temporizadores de uso
         document.querySelectorAll('.usage-timer').forEach(timer => {
           const type = timer.dataset.type;
           const breakerId = timer.dataset.breaker;
@@ -925,6 +989,61 @@
             timer.classList.remove('active', 'warning', 'critical');
             timer.classList.add('inactive');
           }
+        });
+        
+        // Actualizar carga actual en tiempo real
+        const tarjetas = currentModels.tarjetas || [];
+        const arduinos = currentModels.arduinos || [];
+        const now = Date.now();
+        const maxCarga = usageLimits.max_carga_por_tarjeta || 2000;
+        
+        tarjetas.forEach((tarjeta) => {
+          let cargaActual = 0;
+          let cargaAcumulada = tarjeta.carga_acumulada || 0;
+          
+          arduinos.forEach((arduino) => {
+            if (!arduino.es_estacion_carga) return;
+            const charging = arduino.charging || [];
+            const sess = charging.find((c) => c.uid === tarjeta.id);
+            if (sess) {
+              const wps = sess.wps || 0;
+              const startedMs = sess.started_ms || now;
+              const elapsedS = (now - startedMs) / 1000;
+              cargaActual = wps * elapsedS;
+              
+              // Actualizar valor de carga actual
+              const cargaEl = document.querySelector('.carga-actual-display-' + tarjeta.id);
+              if (cargaEl) {
+                cargaEl.textContent = cargaActual.toFixed(2);
+              }
+              
+              // Actualizar barra de progreso
+              const cargaTotalPendiente = cargaAcumulada + cargaActual;
+              const cargaLimitada = Math.min(cargaTotalPendiente, maxCarga);
+              const porcentajeCarga = (cargaLimitada / maxCarga) * 100;
+              
+              // Actualizar ancho de barra
+              const progressBar = document.querySelector('.carga-progress-' + tarjeta.id);
+              if (progressBar) {
+                progressBar.style.width = porcentajeCarga + '%';
+                
+                // Cambiar color según porcentaje
+                let barColor = 'linear-gradient(90deg, #00ff88, #00d4ff)';
+                if (porcentajeCarga >= 90) {
+                  barColor = 'linear-gradient(90deg, #ff3366, #ff6699)';
+                } else if (porcentajeCarga >= 70) {
+                  barColor = 'linear-gradient(90deg, #ff9900, #ffaa33)';
+                }
+                progressBar.style.background = barColor;
+              }
+              
+              // Actualizar texto de carga total
+              const cargaTotalEl = document.querySelector('.carga-total-display-' + tarjeta.id);
+              if (cargaTotalEl) {
+                cargaTotalEl.textContent = cargaLimitada.toFixed(2) + ' W·s';
+              }
+            }
+          });
         });
       }
 

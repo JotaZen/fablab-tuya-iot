@@ -81,8 +81,8 @@
       "current": 0.0,
       "power": 0.0,
       "consumption_last_ws": 4.0,
-      "usos_profe": 3,
-      "usos_ia": 1,
+      "usos_profe": 0,
+      "usos_ia": 0,
       "usando_ia_desde": null,
       "usando_profe_desde": null,
       "energy": 0.0
@@ -110,10 +110,10 @@
       "voltage": 0,
       "current": 0.0,
       "energy": 0.01,
-      "usos_profe": 3,
-      "usos_ia": 1,
+      "usos_profe": 0,
+      "usos_ia": 0,
       "usando_ia_desde": null,
-      "usando_profe_desde": 1759877242644,
+      "usando_profe_desde": null,
       "power": 0.0
     },
     {
@@ -136,8 +136,8 @@
         "sensor.liceo_3_potencia_de_la_fase_c",
         "sensor.liceo_3_tension_de_la_fase_c"
       ],
-      "usos_profe": 2,
-      "usos_ia": 1,
+      "usos_profe": 0,
+      "usos_ia": 0,
       "usando_ia_desde": null,
       "usando_profe_desde": null,
       "voltage": 0
@@ -162,8 +162,8 @@
         "sensor.liceo_4_potencia_de_la_fase_c",
         "sensor.liceo_4_tension_de_la_fase_c"
       ],
-      "usos_profe": 2,
-      "usos_ia": 1,
+      "usos_profe": 0,
+      "usos_ia": 0,
       "usando_ia_desde": null,
       "usando_profe_desde": null,
       "voltage": 0
@@ -188,9 +188,13 @@
         "sensor.liceo_5_potencia_de_la_fase_c",
         "sensor.liceo_5_tension_de_la_fase_c"
       ],
-      "voltage": 235.7,
+      "voltage": 234.6,
       "energy": 0.0,
       "current": 0.0,
+      "usos_profe": 0,
+      "usos_ia": 0,
+      "usando_ia_desde": null,
+      "usando_profe_desde": null,
       "power": 0.0
     },
     {
@@ -217,6 +221,10 @@
       "current": 0.0,
       "power": 0.0,
       "consumption_last_ws": 0.0,
+      "usos_profe": 0,
+      "usos_ia": 0,
+      "usando_ia_desde": null,
+      "usando_profe_desde": null,
       "energy": 0.0
     },
     {
@@ -242,6 +250,10 @@
       "voltage": 231.0,
       "current": 0.0,
       "power": 0.0,
+      "usos_profe": 0,
+      "usos_ia": 0,
+      "usando_ia_desde": null,
+      "usando_profe_desde": null,
       "consumption_last_ws": 40.0
     },
     {
@@ -267,6 +279,10 @@
       "voltage": 232.5,
       "current": 0.0,
       "power": 0.0,
+      "usos_profe": 0,
+      "usos_ia": 0,
+      "usando_ia_desde": null,
+      "usando_profe_desde": null,
       "consumption_last_ws": 10.0,
       "energy": 0.01
     },
@@ -294,6 +310,10 @@
       "power": 0.0,
       "voltage": 233.9,
       "consumption_last_ws": 10.0,
+      "usos_profe": 0,
+      "usos_ia": 0,
+      "usando_ia_desde": null,
+      "usando_profe_desde": null,
       "energy": 0.03
     }
   ],

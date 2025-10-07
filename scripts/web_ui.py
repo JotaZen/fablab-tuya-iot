@@ -273,7 +273,36 @@ async def rfid_post(request):
                         charging = []
                         matched['charging'] = charging
                     if uid_seen:
-                        # buscar sesión existente por UID
+                        # Buscar la tarjeta correspondiente
+                        tarjetas = models.get('tarjetas', [])
+                        tarjeta = next((t for t in tarjetas if t.get('id') == uid_seen), None)
+                        
+                        # Si la tarjeta estaba en otra estación de carga, transferir carga_acumulada
+                        for other_arduino in arduinos:
+                            if other_arduino.get('id') == origen:
+                                continue  # skip current arduino
+                            if not bool(other_arduino.get('es_estacion_carga')):
+                                continue
+                            other_charging = other_arduino.get('charging') if isinstance(other_arduino.get('charging'), list) else []
+                            for other_sess in other_charging[:]:
+                                if other_sess.get('uid') == uid_seen:
+                                    # Calcular carga actual y transferir a acumulada
+                                    try:
+                                        wps = float(other_sess.get('wps') or other_arduino.get('w_por_segundo') or 0.0)
+                                        started = int(other_sess.get('started_ms') or now_ms)
+                                        elapsed_ms = max(0, now_ms - started)
+                                        carga_actual = wps * (elapsed_ms / 1000.0)
+                                        
+                                        if tarjeta:
+                                            current_acum = float(tarjeta.get('carga_acumulada') or 0.0)
+                                            tarjeta['carga_acumulada'] = round(current_acum + carga_actual, 6)
+                                    except Exception as e:
+                                        print(f'Error transferring charge: {e}')
+                                    # Remover sesión de la otra estación
+                                    other_charging.remove(other_sess)
+                            other_arduino['charging'] = other_charging
+                        
+                        # buscar sesión existente por UID en la estación actual
                         sess = None
                         for s in charging:
                             if s.get('uid') == uid_seen:
@@ -302,14 +331,26 @@ async def rfid_post(request):
                                     sess['wps'] = float(matched.get('w_por_segundo') or 0.0)
                                 except Exception:
                                     sess['wps'] = 0.0
+                        
+                        # Inicializar carga_acumulada si no existe
+                        if tarjeta and 'carga_acumulada' not in tarjeta:
+                            tarjeta['carga_acumulada'] = 0.0
+                    
                     if save_models(models):
                         asyncio.create_task(state.broadcast({'type': 'arduinos:update', 'id': matched.get('id'), 'arduino': matched}))
+                        if tarjeta:
+                            asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': uid_seen, 'tarjeta': tarjeta}))
                 else:
                     # Lector normal: liquidar carga si existe en cualquier estación
                     uid_seen = data.get('uid') or data.get('rfid') or data.get('nfc')
                     if uid_seen:
-                        total = 0.0
+                        total_carga_actual = 0.0
                         now_ms = int(time.time() * 1000)
+                        
+                        # Buscar la tarjeta
+                        tarjetas = models.get('tarjetas', [])
+                        tarjeta = next((t for t in tarjetas if t.get('id') == uid_seen), None)
+                        
                         for ad in arduinos:
                             try:
                                 if not bool(ad.get('es_estacion_carga')):
@@ -325,7 +366,7 @@ async def rfid_post(request):
                                         wps = float(s.get('wps') if s.get('wps') is not None else (ad.get('w_por_segundo') or 0.0))
                                         started = int(s.get('started_ms') or now_ms)
                                         elapsed_ms = max(0, now_ms - started)
-                                        total += wps * (elapsed_ms / 1000.0)
+                                        total_carga_actual += wps * (elapsed_ms / 1000.0)
                                     except Exception:
                                         # si hay problema, no sumar y descartar sesión para evitar loops
                                         pass
@@ -345,20 +386,31 @@ async def rfid_post(request):
                                             wps_fb = float(ad.get('w_por_segundo') or 0.0)
                                         except Exception:
                                             wps_fb = 0.0
-                                        total += wps_fb * (elapsed_ms / 1000.0)
+                                        total_carga_actual += wps_fb * (elapsed_ms / 1000.0)
                                         ad['last'] = None
                             except Exception:
                                 continue
-                        if total > 0:
-                            tarjetas = models.get('tarjetas', [])
-                            t = next((t for t in tarjetas if t.get('id') == uid_seen), None)
-                            if t is not None:
-                                try:
-                                    current = float(t.get('saldo') or 0.0)
-                                except Exception:
-                                    current = 0.0
-                                t['saldo'] = round(current + total, 6)
-                                asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': uid_seen, 'tarjeta': t}))
+                        
+                        # Convertir carga acumulada + carga actual a saldo
+                        if tarjeta is not None:
+                            try:
+                                current_saldo = float(tarjeta.get('saldo') or 0.0)
+                                carga_acumulada = float(tarjeta.get('carga_acumulada') or 0.0)
+                                total_carga = carga_acumulada + total_carga_actual
+                                
+                                # Aplicar límite máximo de carga
+                                limits = load_usage_limits()
+                                max_carga = float(limits.get('max_carga_por_tarjeta') or 100000)
+                                total_carga = min(total_carga, max_carga)
+                                
+                                # Transferir todo a saldo y resetear carga_acumulada
+                                tarjeta['saldo'] = round(current_saldo + total_carga, 6)
+                                tarjeta['carga_acumulada'] = 0.0
+                                
+                                asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': uid_seen, 'tarjeta': tarjeta}))
+                            except Exception as e:
+                                print(f'Error converting charge to balance: {e}')
+                        
                         if save_models(models):
                             for ad in arduinos:
                                 if bool(ad.get('es_estacion_carga')):
@@ -757,6 +809,8 @@ async def usage_limits_update_handler(request):
         limits['max_usos_profe'] = int(body['max_usos_profe'])
     if 'max_usos_ia' in body:
         limits['max_usos_ia'] = int(body['max_usos_ia'])
+    if 'max_carga_por_tarjeta' in body:
+        limits['max_carga_por_tarjeta'] = float(body['max_carga_por_tarjeta'])
     
     if save_usage_limits(limits):
         asyncio.create_task(state.broadcast({'type': 'usage_limits:update', 'limits': limits}))
