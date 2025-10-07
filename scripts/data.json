@@ -12,7 +12,7 @@
     },
     {
       "id": "35F515AD",
-      "saldo": 0.0,
+      "saldo": 202.0,
       "nombre": "T9"
     },
     {
@@ -58,66 +58,41 @@
   ],
   "breakers": [
     {
-      "id": "agustin",
-      "tuya_id": "D69335A4",
-      "entity_id": "switch.agustin",
-      "nombre": "Agustin",
-      "estado": false,
-      "tarjeta": "D69335A4",
-      "energy": 0.62,
-      "energy_entity": "sensor.agustin_energia_total",
-      "current_entity": "sensor.agustin_corriente_de_la_fase_c",
-      "power_entity": "sensor.agustin_potencia_de_la_fase_c",
-      "voltage_entity": "sensor.liceo_5_tension_de_la_fase_a",
-      "voltage": 232.0,
-      "current": 0.0,
-      "power": 0.0,
-      "consumption_last_ws": 22.724,
-      "consumption_power_w": 0,
-      "entities": [
-        "sensor.agustin_corriente_de_la_fase_a",
-        "sensor.agustin_potencia_de_la_fase_a",
-        "sensor.agustin_tension_de_la_fase_a",
-        "sensor.agustin_corriente_de_la_fase_b",
-        "sensor.agustin_potencia_de_la_fase_b",
-        "sensor.agustin_tension_de_la_fase_b",
-        "sensor.agustin_corriente_de_la_fase_c",
-        "sensor.agustin_potencia_de_la_fase_c",
-        "sensor.agustin_tension_de_la_fase_c",
-        "select.wifi_breaker_comportamiento_de_encendido"
-      ]
-    },
-    {
       "id": "ebf6994cfb6a87943dz2ni",
       "tuya_id": "ebf6994cfb6a87943dz2ni",
-      "entity_id": "switch.breaker_10_interruptor",
+      "entity_id": "switch.breaker_1_interruptor",
       "nombre": "Liceo-1",
       "estado": false,
       "tarjeta": "1651B89E",
-      "energy_entity": "sensor.breaker_10_energia_total",
+      "energy_entity": "sensor.breaker_1_energia_total",
       "entities": [
-        "switch.breaker_10_interruptor",
-        "sensor.breaker_10_corriente_de_la_fase_a",
-        "sensor.breaker_10_potencia_de_la_fase_a",
-        "sensor.breaker_10_tension_de_la_fase_a",
-        "sensor.breaker_10_corriente_de_la_fase_b",
-        "sensor.breaker_10_potencia_de_la_fase_b",
-        "sensor.breaker_10_tension_de_la_fase_b",
-        "sensor.breaker_10_corriente_de_la_fase_c",
-        "sensor.breaker_10_potencia_de_la_fase_c",
-        "sensor.breaker_10_tension_de_la_fase_c"
+        "switch.breaker_1_interruptor",
+        "sensor.breaker_1_corriente_de_la_fase_a",
+        "sensor.breaker_1_potencia_de_la_fase_a",
+        "sensor.breaker_1_tension_de_la_fase_a",
+        "sensor.breaker_1_corriente_de_la_fase_b",
+        "sensor.breaker_1_potencia_de_la_fase_b",
+        "sensor.breaker_1_tension_de_la_fase_b",
+        "sensor.breaker_1_corriente_de_la_fase_c",
+        "sensor.breaker_1_potencia_de_la_fase_c",
+        "sensor.breaker_1_tension_de_la_fase_c"
       ],
-      "voltage": 231.6,
+      "voltage": 233.0,
       "current": 0.0,
       "power": 0.0,
-      "consumption_last_ws": 4.0
+      "consumption_last_ws": 4.0,
+      "usos_profe": 1,
+      "usos_ia": 1,
+      "usando_ia_desde": null,
+      "usando_profe_desde": null,
+      "energy": 0.0
     },
     {
       "id": "liceo_2",
       "tuya_id": "958710AD",
       "entity_id": "switch.breaker_2_interruptor",
       "nombre": "Liceo-2",
-      "estado": false,
+      "estado": true,
       "tarjeta": "6581AAAC",
       "energy_entity": "sensor.breaker_2_energia_total",
       "entities": [
@@ -132,14 +107,17 @@
         "sensor.breaker_2_potencia_de_la_fase_c",
         "sensor.breaker_2_tension_de_la_fase_c"
       ],
-      "voltage": 0
+      "voltage": 0,
+      "current": 0.0,
+      "energy": 0.01,
+      "power": 0.0
     },
     {
       "id": "liceo_3",
       "tuya_id": "958710AD",
       "entity_id": "switch.breaker_3_interruptor",
       "nombre": "Liceo-3",
-      "estado": false,
+      "estado": true,
       "tarjeta": "6577AAD",
       "energy_entity": "sensor.breaker_3_energia_total",
       "entities": [
@@ -161,7 +139,7 @@
       "tuya_id": "958710AD",
       "entity_id": "switch.breaker_4_interruptor",
       "nombre": "Liceo-4",
-      "estado": false,
+      "estado": true,
       "tarjeta": "45E9DAD",
       "energy_entity": "sensor.breaker_4_energia_total",
       "entities": [
@@ -183,7 +161,7 @@
       "tuya_id": "9518ABAC",
       "entity_id": "switch.liceo_5",
       "nombre": "Liceo-5",
-      "estado": false,
+      "estado": true,
       "tarjeta": "9518ABAC",
       "energy_entity": "sensor.liceo_5_energia_total",
       "entities": [
@@ -198,7 +176,10 @@
         "sensor.liceo_5_potencia_de_la_fase_c",
         "sensor.liceo_5_tension_de_la_fase_c"
       ],
-      "voltage": 232.0
+      "voltage": 231.8,
+      "energy": 0.0,
+      "current": 0.0,
+      "power": 0.0
     },
     {
       "id": "eb3ecccb08de5e8fdaxqjq",
@@ -220,10 +201,11 @@
         "sensor.breaker_6_potencia_de_la_fase_c",
         "sensor.breaker_6_tension_de_la_fase_c"
       ],
-      "voltage": 232.0,
+      "voltage": 231.4,
       "current": 0.0,
       "power": 0.0,
-      "consumption_last_ws": 0.0
+      "consumption_last_ws": 0.0,
+      "energy": 0.0
     },
     {
       "id": "eb3ecccb08de5e8fdaxqjq",
@@ -255,7 +237,7 @@
       "tuya_id": "eb7fb14604bce5beeczasf",
       "entity_id": "switch.breaker_8_interruptor",
       "nombre": "Liceo-8",
-      "estado": false,
+      "estado": true,
       "tarjeta": "C5A56AD",
       "energy_entity": "sensor.breaker_8_energia_total",
       "entities": [
@@ -270,7 +252,7 @@
         "sensor.breaker_8_potencia_de_la_fase_c",
         "sensor.breaker_8_tension_de_la_fase_c"
       ],
-      "voltage": 231.8,
+      "voltage": 233.0,
       "current": 0.0,
       "power": 0.0,
       "consumption_last_ws": 10.0,
@@ -298,7 +280,7 @@
       ],
       "current": 0.0,
       "power": 0.0,
-      "voltage": 231.8,
+      "voltage": 233.0,
       "consumption_last_ws": 10.0,
       "energy": 0.03
     }
@@ -332,8 +314,8 @@
       "w_por_segundo": 10,
       "last": {
         "id": "SOLAR",
-        "nfc": "E5104AD",
-        "ts": 1759365747551
+        "nfc": "958710AD",
+        "ts": 1759872110794
       },
       "charging": [
         {
@@ -344,6 +326,16 @@
             "id": "SOLAR",
             "nfc": "E5104AD",
             "ts": 1759365747551
+          }
+        },
+        {
+          "uid": "958710AD",
+          "started_ms": 1759872110794,
+          "wps": 10.0,
+          "last": {
+            "id": "SOLAR",
+            "nfc": "958710AD",
+            "ts": 1759872110794
           }
         }
       ]
