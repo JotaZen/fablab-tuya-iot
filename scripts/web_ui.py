@@ -428,6 +428,17 @@ async def rfid_post(request):
                                 print(f'[Liquidación] {uid_seen}: saldo previo={current_saldo:.2f} W, carga={total_carga_actual:.2f} W, nuevo saldo={tarjeta["saldo"]:.2f} W')
                                 
                                 asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': uid_seen, 'tarjeta': tarjeta}))
+                                
+                                # Encender el breaker asociado después de liquidar (si tiene saldo)
+                                if tarjeta['saldo'] > 0:
+                                    breakers = models.get('breakers', [])
+                                    for b in breakers:
+                                        if b.get('tarjeta') == uid_seen:
+                                            try:
+                                                asyncio.create_task(set_breaker(DATA_PATH, b.get('id'), True))
+                                                print(f"[Liquidación] Encendiendo breaker {b.get('id')} de tarjeta {uid_seen} (estado previo: {b.get('estado')})")
+                                            except Exception as e:
+                                                print(f'Error encendiendo breaker al liquidar: {e}')
                             except Exception as e:
                                 print(f'Error converting charge to balance: {e}')
                         

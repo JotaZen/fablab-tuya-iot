@@ -686,13 +686,15 @@
               if ("current" in data) breaker.current = data.current;
               if ("energy" in data) breaker.energy = data.energy;
             }
-            renderDisplay();
+            // ✅ OPTIMIZACIÓN: Solo actualizar la tarjeta específica del breaker
+            updateSingleBreakerCard(breaker);
           }
         } else if (data.type === "tarjetas:update") {
           const tarjeta = currentModels.tarjetas.find((t) => t.id === data.id);
           if (tarjeta && data.tarjeta) {
             Object.assign(tarjeta, data.tarjeta);
-            renderDisplay();
+            // ✅ OPTIMIZACIÓN: Solo actualizar tarjetas que usan esta tarjeta
+            updateCardsForTarjeta(data.id);
           }
         } else if (data.type === "breakers:usage_update") {
           const breaker = currentModels.breakers.find((b) => b.id === data.id);
@@ -701,7 +703,8 @@
             if ("usos_ia" in data) breaker.usos_ia = data.usos_ia;
             if ("usando_profe_desde" in data) breaker.usando_profe_desde = data.usando_profe_desde;
             if ("usando_ia_desde" in data) breaker.usando_ia_desde = data.usando_ia_desde;
-            renderDisplay();
+            // ✅ OPTIMIZACIÓN: Solo actualizar esta tarjeta específica
+            updateSingleBreakerCard(breaker);
           }
         } else if (data.type === "usage_limits:update") {
           usageLimits = data.limits;
@@ -733,6 +736,76 @@
         const elapsedSeconds = Math.floor((now - startedMs) / 1000);
         const remaining = Math.max(0, limitSeconds - elapsedSeconds);
         return remaining;
+      }
+
+      // ✅ OPTIMIZACIÓN: Actualizar solo una tarjeta específica de breaker
+      function updateSingleBreakerCard(breaker) {
+        const cardElement = document.querySelector(`[data-breaker-id="${breaker.id}"]`);
+        if (!cardElement) {
+          // Si la tarjeta no existe, hacer render completo
+          renderDisplay();
+          return;
+        }
+        
+        // Actualizar solo los datos cambiantes sin recrear el DOM completo
+        const tarjeta = currentModels.tarjetas.find((t) => t.id === breaker.tarjeta);
+        if (!tarjeta) return;
+        
+        const energia = parseFloat(tarjeta.saldo || 0);
+        const maxCarga = usageLimits.max_carga_por_tarjeta || 2000;
+        
+        // Actualizar estado visual de la tarjeta
+        const isOn = breaker.estado;
+        cardElement.className = 'breaker-card';
+        
+        const energiaPercent = Math.min((energia / maxCarga) * 100, 100);
+        if (isOn) {
+          cardElement.classList.add('on');
+          if (energiaPercent === 0 || energia < 100) {
+            cardElement.classList.add('critical-balance');
+          } else if (energiaPercent < 50) {
+            cardElement.classList.add('low-balance');
+          }
+        }
+        
+        // Actualizar elementos específicos
+        const estadoElement = cardElement.querySelector('.estado-indicator');
+        if (estadoElement) {
+          estadoElement.textContent = isOn ? '● ENCENDIDO' : '○ APAGADO';
+        }
+        
+        const saldoElement = cardElement.querySelector('.saldo-value');
+        if (saldoElement) {
+          saldoElement.textContent = `${Math.round(energia).toLocaleString()} W`;
+        }
+        
+        const progressBar = cardElement.querySelector('.progress-fill');
+        if (progressBar) {
+          progressBar.style.width = `${Math.min(energiaPercent, 100)}%`;
+        }
+        
+        // Actualizar contadores de uso
+        const profeCounter = cardElement.querySelector(`[data-counter="profe"]`);
+        if (profeCounter) {
+          profeCounter.textContent = breaker.usos_profe || 0;
+        }
+        
+        const iaCounter = cardElement.querySelector(`[data-counter="ia"]`);
+        if (iaCounter) {
+          iaCounter.textContent = breaker.usos_ia || 0;
+        }
+      }
+
+      // ✅ OPTIMIZACIÓN: Actualizar todas las tarjetas que usan una tarjeta específica
+      function updateCardsForTarjeta(tarjetaId) {
+        const breakers = currentModels.breakers.filter(b => b.tarjeta === tarjetaId);
+        if (breakers.length === 0) {
+          return;
+        }
+        
+        breakers.forEach(breaker => {
+          updateSingleBreakerCard(breaker);
+        });
       }
 
       function renderDisplay() {
@@ -836,12 +909,12 @@
             
             // Calcular progreso basado en: (saldo actual + carga en tiempo real) / límite
             const maxCarga = usageLimits.max_carga_por_tarjeta || 2000;
-            const saldoBase = energia; // energia = tarjeta.saldo (guardado en JSON)
-            const saldoConCarga = saldoBase + cargaActual; // Saldo + carga en tiempo real
-            const porcentajeCarga = (saldoConCarga / maxCarga) * 100;
+            const saldoBase = Math.min(energia, maxCarga); // Capar saldo base primero
+            const saldoConCarga = Math.min(saldoBase + cargaActual, maxCarga); // Luego capar con carga
+            const porcentajeCarga = (saldoConCarga / maxCarga) * 100; // Ahora siempre ≤100%
             
-            // Limitar visualmente al máximo
-            const saldoMostrar = Math.min(saldoConCarga, maxCarga);
+            // Saldo a mostrar (ya está capado)
+            const saldoMostrar = saldoConCarga;
             
             // Determinar color de barra según porcentaje
             let barColor = 'linear-gradient(90deg, #00ff88, #00d4ff)';
@@ -1072,10 +1145,10 @@
               cargaActual = wps * elapsedS;
               
               // Actualizar barra de progreso basado en: (saldo + carga en tiempo real) / límite
-              const saldoBase = tarjeta.saldo || 0;
-              const saldoConCarga = saldoBase + cargaActual;
-              const saldoMostrar = Math.min(saldoConCarga, maxCarga);
-              const porcentajeCarga = (saldoConCarga / maxCarga) * 100;
+              const saldoBase = Math.min(tarjeta.saldo || 0, maxCarga); // Capar saldo base primero
+              const saldoConCarga = Math.min(saldoBase + cargaActual, maxCarga); // Luego capar con carga
+              const saldoMostrar = saldoConCarga; // Ya está capado
+              const porcentajeCarga = (saldoConCarga / maxCarga) * 100; // Ahora siempre ≤100%
               
               // Actualizar ancho de barra
               const progressBar = document.querySelector('.carga-progress-' + tarjeta.id);
