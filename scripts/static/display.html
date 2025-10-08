@@ -143,6 +143,8 @@
         overflow: hidden;
         transition: all 0.3s ease;
         box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+        display: flex;
+        flex-direction: column;
       }
 
       /* Estado ON con brillo verde */
@@ -500,6 +502,25 @@
         margin-bottom: 3px;
       }
 
+      .usage-count.editable-usage {
+        transition: all 0.2s ease;
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid transparent;
+      }
+
+      .usage-count.editable-usage:hover {
+        background: rgba(0, 212, 255, 0.2);
+        border: 1px solid rgba(0, 212, 255, 0.5);
+        transform: scale(1.05);
+        box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+      }
+
+      .usage-count.editable-usage:active {
+        transform: scale(0.98);
+      }
+
       .usage-timer {
         font-size: 1.1rem;
         font-weight: 700;
@@ -581,13 +602,6 @@
       <!-- Sidebar con estadísticas verticales -->
       <div class="stats-sidebar">
         <div class="stat-card">
-          <div class="stat-label">⚡ Consumo</div>
-          <div class="stat-value">
-            <span id="totalPowerPerSecond">0</span><span class="stat-unit">W/s</span>
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">📊 Activos</div>
           <div class="stat-value">
             <span id="activeBreakers">0</span><span class="stat-unit">/<span id="totalBreakers">0</span></span>
           </div>
@@ -726,19 +740,16 @@
         const tarjetas = currentModels.tarjetas || [];
         const arduinos = currentModels.arduinos || [];
 
-        // Calcular consumo total y breakers activos
-        let totalPowerPerSecond = 0;
+        // Calcular breakers activos
         let activeCount = 0;
 
         breakers.forEach((b) => {
           if (b.estado) {
             activeCount++;
-            totalPowerPerSecond += parseFloat(b.power || 0);
           }
         });
 
         // Actualizar estadísticas
-        document.getElementById("totalPowerPerSecond").textContent = totalPowerPerSecond.toFixed(2);
         document.getElementById("activeBreakers").textContent = activeCount;
         document.getElementById("totalBreakers").textContent = breakers.length;
 
@@ -749,7 +760,7 @@
         breakers.forEach((breaker, index) => {
           const tarjeta = tarjetas.find((t) => t.id === breaker.tarjeta);
           const energia = tarjeta ? parseFloat(tarjeta.saldo || 0) : 0;
-          const maxEnergia = 200000;
+          const maxEnergia = 200000; // Límite máximo de energía
           const energiaPercent = Math.min((energia / maxEnergia) * 100, 100);
 
           // Verificar si la tarjeta está en carga
@@ -765,7 +776,7 @@
             });
           }
 
-          // Determinar alertas de energía
+          // Determinar colores según porcentaje de energía
           let balanceClass = "";
           let cardClass = "breaker-card";
 
@@ -773,12 +784,20 @@
             cardClass += " charging";
           } else if (breaker.estado) {
             cardClass += " on";
-            if (energia < 10000) {
+            // Azul/Verde: > 50%, Amarillo: < 50%, Rojo: crítico (< 5%)
+            if (energiaPercent === 0 || energia < 100) {
               balanceClass = "critical";
               cardClass += " critical-balance";
-            } else if (energia < 50000) {
+            } else if (energiaPercent < 50) {
               balanceClass = "low";
               cardClass += " low-balance";
+            }
+          } else {
+            // OFF pero con alertas según energía
+            if (energiaPercent === 0 || energia < 100) {
+              balanceClass = "critical";
+            } else if (energiaPercent < 50) {
+              balanceClass = "low";
             }
           }
 
@@ -794,17 +813,20 @@
 
           if (isCharging) {
             // Vista especial para tarjetas en carga
-            // Calcular carga actual en tiempo real
+            // Calcular carga actual en tiempo real y sumarla al saldo
             let cargaActual = 0;
-            let cargaAcumulada = tarjeta?.carga_acumulada || 0;
             let arduinoId = '';
+            let wps = 0;
+            let startedMs = Date.now();
+            let sess = null;
             
             arduinos.forEach((arduino) => {
               if (arduino.charging && Array.isArray(arduino.charging)) {
-                const sess = arduino.charging.find((c) => c.uid === tarjeta.id);
-                if (sess) {
-                  const wps = sess.wps || 0;
-                  const startedMs = sess.started_ms || Date.now();
+                const charging = arduino.charging.find((c) => c.uid === tarjeta.id);
+                if (charging) {
+                  sess = charging;
+                  wps = charging.wps || 0;
+                  startedMs = charging.started_ms || Date.now();
                   const elapsedS = (Date.now() - startedMs) / 1000;
                   cargaActual = wps * elapsedS;
                   arduinoId = arduino.id;
@@ -812,11 +834,14 @@
               }
             });
             
-            // Calcular progreso de carga
+            // Calcular progreso basado en: (saldo actual + carga en tiempo real) / límite
             const maxCarga = usageLimits.max_carga_por_tarjeta || 2000;
-            const cargaTotalPendiente = cargaAcumulada + cargaActual;
-            const cargaLimitada = Math.min(cargaTotalPendiente, maxCarga);
-            const porcentajeCarga = (cargaLimitada / maxCarga) * 100;
+            const saldoBase = energia; // energia = tarjeta.saldo (guardado en JSON)
+            const saldoConCarga = saldoBase + cargaActual; // Saldo + carga en tiempo real
+            const porcentajeCarga = (saldoConCarga / maxCarga) * 100;
+            
+            // Limitar visualmente al máximo
+            const saldoMostrar = Math.min(saldoConCarga, maxCarga);
             
             // Determinar color de barra según porcentaje
             let barColor = 'linear-gradient(90deg, #00ff88, #00d4ff)';
@@ -826,48 +851,46 @@
               barColor = 'linear-gradient(90deg, #ff9900, #ffaa33)';
             }
             
+            // Calcular tiempo transcurrido cargando
+            const elapsedSeconds = Math.floor((Date.now() - startedMs) / 1000);
+            const tiempoTranscurrido = formatTime(elapsedSeconds);
+            
             card.innerHTML = `
               <div class="charging-header">
                 <div class="battery-icon">🔋</div>
                 <div class="tarjeta-name">${tarjeta?.nombre || "Tarjeta"}</div>
               </div>
-              <div class="charging-energy">
-                <div class="energy-label">⚡ Saldo Actual</div>
-                <div class="energy-value">
-                  ${Math.round(energia/1000).toLocaleString()}<span class="energy-unit">kW·s</span>
+              
+              <div class="metric" style="margin-top: 15px; background: rgba(255, 215, 0, 0.15); border: 1px solid rgba(255, 215, 0, 0.4); padding: 15px;">
+                <div class="metric-label" style="font-size: 0.8rem; color: rgba(255, 255, 255, 0.7);">Estación</div>
+                <div class="metric-value" style="color: #ffd700; font-size: 1.8rem; font-weight: 700;">
+                  ${arduinoId}
+                </div>
+                <div style="font-size: 0.75rem; color: rgba(255, 255, 255, 0.6); margin-top: 6px;">
+                  Cargando a ${wps.toFixed(1)} W
                 </div>
               </div>
-              <div class="metric" style="margin-top: 10px;">
-                <div class="metric-label">Estación: ${arduinoId}</div>
-                <div class="metric-value" style="color: #ffd700;">
-                  <span class="carga-actual-display-${tarjeta.id}">${cargaActual.toFixed(2)}</span><span class="metric-unit">W·s/seg</span>
-                </div>
-              </div>
-              ${cargaAcumulada > 0 ? `
-                <div class="metric" style="margin-top: 6px; background: rgba(0, 212, 255, 0.2);">
-                  <div class="metric-label">💰 Carga Acumulada</div>
-                  <div class="metric-value" style="color: #00d4ff;">
-                    ${cargaAcumulada.toFixed(2)}<span class="metric-unit">W·s</span>
-                  </div>
-                </div>
-              ` : ''}
-              <div class="metric" style="margin-top: 10px; background: rgba(0, 0, 0, 0.3);">
-                <div class="metric-label" style="display: flex; justify-content: space-between; align-items: center;">
-                  <span>📊 Progreso de Carga</span>
-                  <span style="font-weight: 700; color: ${porcentajeCarga >= 90 ? '#ff3366' : porcentajeCarga >= 70 ? '#ff9900' : '#00ff88'};">
+              
+              <div class="metric" style="margin-top: 15px; background: rgba(0, 0, 0, 0.3); padding: 15px;">
+                <div class="metric-label" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                  <span style="font-size: 0.8rem;">Progreso</span>
+                  <span style="font-weight: 700; font-size: 1.1rem; color: ${porcentajeCarga >= 90 ? '#ff3366' : porcentajeCarga >= 70 ? '#ff9900' : '#00ff88'};">
                     ${porcentajeCarga.toFixed(1)}%
                   </span>
                 </div>
-                <div class="progress-bar" style="margin-top: 8px; height: 12px;">
+                <div class="progress-bar" style="margin-top: 8px; height: 16px;">
                   <div class="progress-fill carga-progress-${tarjeta.id}" 
-                       style="width: ${porcentajeCarga}%; background: ${barColor};">
+                       style="width: ${Math.min(porcentajeCarga, 100)}%; background: ${barColor};">
                   </div>
                 </div>
-                <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 0.65rem; color: rgba(255, 255, 255, 0.6);">
-                  <span class="carga-total-display-${tarjeta.id}">${cargaLimitada.toFixed(2)} W·s</span>
-                  <span>${maxCarga.toFixed(0)} W·s máx</span>
+                <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 0.75rem; color: rgba(255, 255, 255, 0.6);">
+                  <span class="carga-total-display-${tarjeta.id}">${Math.round(saldoMostrar).toLocaleString()} W</span>
+                  <span>Máximo: ${maxCarga.toFixed(0)} W</span>
                 </div>
               </div>
+              
+              <div style="flex: 1;"></div>
+              
               <div class="card-logo"><img src="/static/logos/${logoNumber}.jpg" alt="Logo ${logoNumber}" onerror="this.style.display='none'"></div>
             `;
           } else {
@@ -905,15 +928,8 @@
                 </div>
               </div>
 
-              <div class="metric" style="margin-top: 10px;">
-                <div class="metric-label">⚡ Consumo Actual</div>
-                <div class="metric-value power">
-                  ${(breaker.power || 0).toFixed(2)}<span class="metric-unit">W/s</span>
-                </div>
-              </div>
-
               <div class="metric-main">
-                <div class="metric-label">🔋 Energía Disponible</div>
+                <div class="metric-label">Energía Disponible</div>
                 <div class="metric-value balance ${balanceClass}">
                   ${Math.round(energia).toLocaleString()}<span class="metric-unit">W</span>
                 </div>
@@ -925,7 +941,14 @@
               <div class="usage-cards">
                 <div class="usage-card profe">
                   <div class="usage-card-header">👨‍🏫 Profe</div>
-                  <div class="usage-count">${usosProfe}/${usageLimits.max_usos_profe} usos</div>
+                  <div class="usage-count editable-usage" 
+                       data-breaker="${breaker.id}" 
+                       data-type="profe" 
+                       data-current="${usosProfe}"
+                       style="cursor: pointer; user-select: none;"
+                       title="Click para editar">
+                    ${usosProfe}/${usageLimits.max_usos_profe} usos
+                  </div>
                   <div class="usage-timer ${timerProfeClass}" data-type="profe" data-breaker="${breaker.id}">
                     ${tiempoProfeRestante !== null ? formatTime(tiempoProfeRestante) : '--:--'}
                   </div>
@@ -933,13 +956,22 @@
                 </div>
                 <div class="usage-card ia">
                   <div class="usage-card-header">🤖 IA</div>
-                  <div class="usage-count">${usosIa}/${usageLimits.max_usos_ia} usos</div>
+                  <div class="usage-count editable-usage" 
+                       data-breaker="${breaker.id}" 
+                       data-type="ia" 
+                       data-current="${usosIa}"
+                       style="cursor: pointer; user-select: none;"
+                       title="Click para editar">
+                    ${usosIa}/${usageLimits.max_usos_ia} usos
+                  </div>
                   <div class="usage-timer ${timerIaClass}" data-type="ia" data-breaker="${breaker.id}">
                     ${tiempoIaRestante !== null ? formatTime(tiempoIaRestante) : '--:--'}
                   </div>
                   <div class="usage-limit">${Math.floor(usageLimits.tiempo_ia_segundos/60)}min límite</div>
                 </div>
               </div>
+
+              <div style="flex: 1;"></div>
 
               <div class="card-logo"><img src="/static/logos/${logoNumber}.jpg" alt="Logo ${logoNumber}" onerror="this.style.display='none'"></div>
             `;
@@ -1028,7 +1060,6 @@
         
         tarjetas.forEach((tarjeta) => {
           let cargaActual = 0;
-          let cargaAcumulada = tarjeta.carga_acumulada || 0;
           
           arduinos.forEach((arduino) => {
             if (!arduino.es_estacion_carga) return;
@@ -1040,21 +1071,16 @@
               const elapsedS = (now - startedMs) / 1000;
               cargaActual = wps * elapsedS;
               
-              // Actualizar valor de carga actual
-              const cargaEl = document.querySelector('.carga-actual-display-' + tarjeta.id);
-              if (cargaEl) {
-                cargaEl.textContent = cargaActual.toFixed(2);
-              }
-              
-              // Actualizar barra de progreso
-              const cargaTotalPendiente = cargaAcumulada + cargaActual;
-              const cargaLimitada = Math.min(cargaTotalPendiente, maxCarga);
-              const porcentajeCarga = (cargaLimitada / maxCarga) * 100;
+              // Actualizar barra de progreso basado en: (saldo + carga en tiempo real) / límite
+              const saldoBase = tarjeta.saldo || 0;
+              const saldoConCarga = saldoBase + cargaActual;
+              const saldoMostrar = Math.min(saldoConCarga, maxCarga);
+              const porcentajeCarga = (saldoConCarga / maxCarga) * 100;
               
               // Actualizar ancho de barra
               const progressBar = document.querySelector('.carga-progress-' + tarjeta.id);
               if (progressBar) {
-                progressBar.style.width = porcentajeCarga + '%';
+                progressBar.style.width = Math.min(porcentajeCarga, 100) + '%';
                 
                 // Cambiar color según porcentaje
                 let barColor = 'linear-gradient(90deg, #00ff88, #00d4ff)';
@@ -1066,10 +1092,10 @@
                 progressBar.style.background = barColor;
               }
               
-              // Actualizar texto de carga total
+              // Actualizar texto mostrando saldo + carga en tiempo real
               const cargaTotalEl = document.querySelector('.carga-total-display-' + tarjeta.id);
               if (cargaTotalEl) {
-                cargaTotalEl.textContent = cargaLimitada.toFixed(2) + ' W·s';
+                cargaTotalEl.innerHTML = `${Math.round(saldoMostrar).toLocaleString()} W`;
               }
             }
           });
@@ -1078,6 +1104,58 @@
 
       // ✅ FETCH INICIAL SOLO UNA VEZ - WebSocket maneja el resto
       fetchInitialData();
+      
+      // Manejador de eventos para editar contadores de uso
+      document.addEventListener('click', async (e) => {
+        const target = e.target.closest('.editable-usage');
+        if (!target) return;
+        
+        const breakerId = target.dataset.breaker;
+        const type = target.dataset.type; // 'profe' o 'ia'
+        const currentValue = parseInt(target.dataset.current) || 0;
+        const maxValue = type === 'profe' ? usageLimits.max_usos_profe : usageLimits.max_usos_ia;
+        
+        const newValue = prompt(
+          `Editar usos de ${type.toUpperCase()}\n` +
+          `Valor actual: ${currentValue}/${maxValue}\n` +
+          `Límite máximo: ${maxValue}\n\n` +
+          `Ingrese nuevo valor:`,
+          currentValue
+        );
+        
+        if (newValue === null) return; // Cancelado
+        
+        const numValue = parseInt(newValue);
+        if (isNaN(numValue) || numValue < 0) {
+          alert('Por favor ingrese un número válido (0 o mayor)');
+          return;
+        }
+        
+        // Actualizar en el servidor
+        try {
+          const field = type === 'profe' ? 'usos_profe' : 'usos_ia';
+          const response = await fetch(`/breakers/${breakerId}/usage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [field]: numValue })
+          });
+          
+          const result = await response.json();
+          if (result.ok) {
+            // Actualizar modelo local
+            const breaker = currentModels.breakers.find(b => b.id === breakerId);
+            if (breaker) {
+              breaker[field] = numValue;
+              renderDisplay();
+            }
+          } else {
+            alert('Error al actualizar: ' + (result.error || 'desconocido'));
+          }
+        } catch (err) {
+          console.error('Error actualizando uso:', err);
+          alert('Error de conexión al actualizar');
+        }
+      });
       
       // ✅ Solo actualizar UI local cada segundo (sin HTTP)
       setInterval(updateTimestamp, 1000);

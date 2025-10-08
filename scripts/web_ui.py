@@ -277,7 +277,7 @@ async def rfid_post(request):
                         tarjetas = models.get('tarjetas', [])
                         tarjeta = next((t for t in tarjetas if t.get('id') == uid_seen), None)
                         
-                        # Si la tarjeta estaba en otra estación de carga, transferir carga_acumulada
+                        # Si la tarjeta estaba en otra estación de carga, liquidar carga y transferir a saldo
                         for other_arduino in arduinos:
                             if other_arduino.get('id') == origen:
                                 continue  # skip current arduino
@@ -286,7 +286,7 @@ async def rfid_post(request):
                             other_charging = other_arduino.get('charging') if isinstance(other_arduino.get('charging'), list) else []
                             for other_sess in other_charging[:]:
                                 if other_sess.get('uid') == uid_seen:
-                                    # Calcular carga actual y transferir a acumulada
+                                    # Calcular carga actual y sumar directo al saldo
                                     try:
                                         wps = float(other_sess.get('wps') or other_arduino.get('w_por_segundo') or 0.0)
                                         started = int(other_sess.get('started_ms') or now_ms)
@@ -294,8 +294,17 @@ async def rfid_post(request):
                                         carga_actual = wps * (elapsed_ms / 1000.0)
                                         
                                         if tarjeta:
-                                            current_acum = float(tarjeta.get('carga_acumulada') or 0.0)
-                                            tarjeta['carga_acumulada'] = round(current_acum + carga_actual, 6)
+                                            current_saldo = float(tarjeta.get('saldo') or 0.0)
+                                            nuevo_saldo = current_saldo + carga_actual
+                                            
+                                            # Aplicar límite máximo
+                                            limits = load_usage_limits()
+                                            max_carga = float(limits.get('max_carga_por_tarjeta') or 2000)
+                                            if nuevo_saldo > max_carga:
+                                                tarjeta['saldo'] = float(max_carga)
+                                                print(f'[Transferencia] Saldo de {uid_seen} reseteado a {max_carga} W (pasó el límite)')
+                                            else:
+                                                tarjeta['saldo'] = round(nuevo_saldo, 6)
                                     except Exception as e:
                                         print(f'Error transferring charge: {e}')
                                     # Remover sesión de la otra estación
@@ -321,6 +330,18 @@ async def rfid_post(request):
                                 'last': payload,
                             }
                             charging.append(sess)
+                            
+                            # Apagar el breaker asociado al empezar a cargar
+                            if tarjeta:
+                                breakers = models.get('breakers', [])
+                                for b in breakers:
+                                    if b.get('tarjeta') == uid_seen and b.get('estado'):
+                                        try:
+                                            # Apagar breaker físicamente
+                                            asyncio.create_task(set_breaker(DATA_PATH, b.get('id'), False))
+                                            print(f"[Carga iniciada] Apagando breaker {b.get('id')} de tarjeta {uid_seen}")
+                                        except Exception as e:
+                                            print(f'Error apagando breaker al cargar: {e}')
                         else:
                             # actualizar última lectura, no pisar started_ms si ya existe
                             sess['last'] = payload
@@ -331,17 +352,13 @@ async def rfid_post(request):
                                     sess['wps'] = float(matched.get('w_por_segundo') or 0.0)
                                 except Exception:
                                     sess['wps'] = 0.0
-                        
-                        # Inicializar carga_acumulada si no existe
-                        if tarjeta and 'carga_acumulada' not in tarjeta:
-                            tarjeta['carga_acumulada'] = 0.0
                     
                     if save_models(models):
                         asyncio.create_task(state.broadcast({'type': 'arduinos:update', 'id': matched.get('id'), 'arduino': matched}))
                         if tarjeta:
                             asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': uid_seen, 'tarjeta': tarjeta}))
                 else:
-                    # Lector normal: liquidar carga si existe en cualquier estación
+                    # Lector normal: liquidar carga sumando directamente al saldo
                     uid_seen = data.get('uid') or data.get('rfid') or data.get('nfc')
                     if uid_seen:
                         total_carga_actual = 0.0
@@ -391,21 +408,24 @@ async def rfid_post(request):
                             except Exception:
                                 continue
                         
-                        # Convertir carga acumulada + carga actual a saldo
+                        # Sumar carga calculada directo al saldo (sin carga_acumulada)
                         if tarjeta is not None:
                             try:
                                 current_saldo = float(tarjeta.get('saldo') or 0.0)
-                                carga_acumulada = float(tarjeta.get('carga_acumulada') or 0.0)
-                                total_carga = carga_acumulada + total_carga_actual
                                 
                                 # Aplicar límite máximo de carga
                                 limits = load_usage_limits()
-                                max_carga = float(limits.get('max_carga_por_tarjeta') or 100000)
-                                total_carga = min(total_carga, max_carga)
+                                max_carga = float(limits.get('max_carga_por_tarjeta') or 2000)
                                 
-                                # Transferir todo a saldo y resetear carga_acumulada
-                                tarjeta['saldo'] = round(current_saldo + total_carga, 6)
-                                tarjeta['carga_acumulada'] = 0.0
+                                # Si el saldo + carga pasa el límite, resetear a max_carga
+                                nuevo_saldo = current_saldo + total_carga_actual
+                                if nuevo_saldo > max_carga:
+                                    tarjeta['saldo'] = float(max_carga)
+                                    print(f'[Liquidación] Saldo de {uid_seen} reseteado a {max_carga} W (pasó el límite)')
+                                else:
+                                    tarjeta['saldo'] = round(nuevo_saldo, 6)
+                                
+                                print(f'[Liquidación] {uid_seen}: saldo previo={current_saldo:.2f} W, carga={total_carga_actual:.2f} W, nuevo saldo={tarjeta["saldo"]:.2f} W')
                                 
                                 asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': uid_seen, 'tarjeta': tarjeta}))
                             except Exception as e:
@@ -904,6 +924,73 @@ async def breaker_usage_reset_handler(request):
     return web.json_response({'ok': True, 'id': bid, 'reset': reset_type, 'fields': fields})
 
 
+async def breaker_start_timer_handler(request):
+    """POST /breakers/{id}/timer/start?type=profe|ia - Iniciar temporizador e incrementar contador
+    
+    - Incrementa usos_profe o usos_ia inmediatamente
+    - Guarda timestamp en usando_profe_desde o usando_ia_desde
+    - Valida límite máximo de usos (visual, no bloquea)
+    """
+    bid = request.match_info.get('id')
+    br = get_breaker(DATA_PATH, bid)
+    if not br:
+        return web.json_response({'ok': False, 'error': 'unknown breaker'}, status=404)
+    
+    timer_type = request.query.get('type', 'profe')
+    if timer_type not in ('profe', 'ia'):
+        return web.json_response({'ok': False, 'error': 'invalid type, use profe or ia'}, status=400)
+    
+    # Cargar límites
+    limits = load_usage_limits()
+    max_usos = limits.get(f'max_usos_{timer_type}', 999)
+    current_usos = br.get(f'usos_{timer_type}', 0)
+    
+    # Incrementar contador al iniciar (requisito #26)
+    new_usos = current_usos + 1
+    
+    fields = {
+        f'usos_{timer_type}': new_usos,
+        f'usando_{timer_type}_desde': int(time.time() * 1000)
+    }
+    
+    update_breaker_fields(DATA_PATH, bid, **fields)
+    asyncio.create_task(state.broadcast({'type': 'breakers:usage_update', 'id': bid, **fields}))
+    
+    return web.json_response({
+        'ok': True, 
+        'id': bid, 
+        'type': timer_type, 
+        'usos': new_usos, 
+        'max_usos': max_usos,
+        'started': fields[f'usando_{timer_type}_desde']
+    })
+
+
+async def breaker_stop_timer_handler(request):
+    """POST /breakers/{id}/timer/stop?type=profe|ia - Detener temporizador sin cambiar contador
+    
+    - Detiene el timer poniendo usando_X_desde en null
+    - NO incrementa el contador (ya se incrementó al iniciar)
+    """
+    bid = request.match_info.get('id')
+    br = get_breaker(DATA_PATH, bid)
+    if not br:
+        return web.json_response({'ok': False, 'error': 'unknown breaker'}, status=404)
+    
+    timer_type = request.query.get('type', 'profe')
+    if timer_type not in ('profe', 'ia'):
+        return web.json_response({'ok': False, 'error': 'invalid type, use profe or ia'}, status=400)
+    
+    fields = {
+        f'usando_{timer_type}_desde': None
+    }
+    
+    update_breaker_fields(DATA_PATH, bid, **fields)
+    asyncio.create_task(state.broadcast({'type': 'breakers:usage_update', 'id': bid, **fields}))
+    
+    return web.json_response({'ok': True, 'id': bid, 'type': timer_type, 'stopped': True})
+
+
 _last_tick_time = 0  # timestamp del último tick procesado
 _tick_min_interval = 2.0  # mínimo intervalo entre ticks (segundos) - aumentado para reducir carga
 
@@ -1269,6 +1356,8 @@ def make_app():
     app.router.add_get('/breakers/{id}/usage', breaker_usage_handler)
     app.router.add_post('/breakers/{id}/usage', breaker_usage_update_handler)
     app.router.add_post('/breakers/{id}/usage/reset', breaker_usage_reset_handler)
+    app.router.add_post('/breakers/{id}/timer/start', breaker_start_timer_handler)
+    app.router.add_post('/breakers/{id}/timer/stop', breaker_stop_timer_handler)
     # Exponer endpoint para actualizar saldo de tarjetas desde la UI
     app.router.add_post('/tarjetas/{id}/saldo', tarjeta_update_saldo)
     # Ruta adicional para ajustar saldo (delta)

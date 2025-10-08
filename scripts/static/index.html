@@ -641,19 +641,13 @@
             }
             editingSaldoBid = null;
           } else if (target.matches(".btn-start-timer")) {
-            // Iniciar temporizador
+            // Iniciar temporizador (incrementa contador automáticamente)
             const bid = target.getAttribute("data-bid");
             const type = target.getAttribute("data-type"); // 'profe' o 'ia'
             
             const res = await fetch(
-              "/breakers/" + encodeURIComponent(bid) + "/usage",
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  [`usando_${type}_desde`]: Date.now()
-                }),
-              }
+              "/breakers/" + encodeURIComponent(bid) + "/timer/start?type=" + type,
+              { method: "POST" }
             ).then((r) => r.json());
             
             logEvent(res);
@@ -661,29 +655,18 @@
               fetchModels();
             }
           } else if (target.matches(".btn-stop-timer")) {
-            // Detener temporizador y consumir un uso
+            // Detener temporizador (NO incrementa contador, ya se incrementó al iniciar)
             const bid = target.getAttribute("data-bid");
             const type = target.getAttribute("data-type"); // 'profe' o 'ia'
-            const br = (currentModels.breakers || []).find((x) => x.id === bid);
             
-            if (br) {
-              const currentUsos = br[`usos_${type}`] || 0;
-              const res = await fetch(
-                "/breakers/" + encodeURIComponent(bid) + "/usage",
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    [`usos_${type}`]: currentUsos + 1,
-                    [`usando_${type}_desde`]: null
-                  }),
-                }
-              ).then((r) => r.json());
-              
-              logEvent(res);
-              if (res.ok) {
-                fetchModels();
-              }
+            const res = await fetch(
+              "/breakers/" + encodeURIComponent(bid) + "/timer/stop?type=" + type,
+              { method: "POST" }
+            ).then((r) => r.json());
+            
+            logEvent(res);
+            if (res.ok) {
+              fetchModels();
             }
           } else if (target.matches(".btn-reset-usage")) {
             // Resetear contadores de uso

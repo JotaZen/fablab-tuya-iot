@@ -8,52 +8,52 @@
     {
       "id": "958710AD",
       "nombre": "Test",
-      "saldo": 190921.0
+      "saldo": 2000.0
     },
     {
       "id": "35F515AD",
-      "saldo": 202.0,
+      "saldo": 0.0,
       "nombre": "T9"
     },
     {
       "id": "C5A56AD",
-      "saldo": 0,
+      "saldo": 0.0,
       "nombre": "T8"
     },
     {
       "id": "B53D10AD",
-      "saldo": 877.02,
+      "saldo": 2000.0,
       "nombre": "T7"
     },
     {
       "id": "B5B7FAD",
-      "saldo": 0,
+      "saldo": 2000.0,
       "nombre": "T6"
     },
     {
       "id": "9518ABAC",
-      "saldo": 0,
+      "saldo": 2000.0,
       "nombre": "T5"
     },
     {
       "id": "45E9DAD",
-      "saldo": 124.22,
+      "saldo": 2000.0,
       "nombre": "T4"
     },
     {
       "id": "6577AAD",
-      "saldo": 0,
+      "saldo": 2000.0,
       "nombre": "T3"
     },
     {
       "id": "6581AAAC",
-      "saldo": 0,
+      "saldo": 2000.0,
       "nombre": "T2"
     },
     {
       "id": "1651B89E",
-      "saldo": 100000.0,
-      "nombre": "T1"
+      "nombre": "T1",
+      "saldo": 0.0
     }
   ],
   "breakers": [
@@ -62,7 +62,7 @@
       "tuya_id": "ebf6994cfb6a87943dz2ni",
       "entity_id": "switch.liceo_1_interruptor",
       "nombre": "Liceo-1",
-      "estado": true,
+      "estado": false,
       "tarjeta": "1651B89E",
       "energy_entity": "sensor.liceo_1_energia_total",
       "entities": [
@@ -77,11 +77,11 @@
         "sensor.liceo_1_potencia_de_la_fase_c",
         "sensor.liceo_1_tension_de_la_fase_c"
       ],
-      "voltage": 234.8,
+      "voltage": 235.7,
       "current": 0.0,
       "power": 0.0,
-      "consumption_last_ws": 4.0,
-      "usos_profe": 0,
+      "consumption_last_ws": 3246.0,
+      "usos_profe": 1,
       "usos_ia": 0,
       "usando_ia_desde": null,
       "usando_profe_desde": null,
@@ -107,7 +107,7 @@
         "sensor.liceo_2_potencia_de_la_fase_c",
         "sensor.liceo_2_tension_de_la_fase_c"
       ],
-      "voltage": 234.8,
+      "voltage": 235.6,
       "current": 0.0,
       "energy": 0.01,
       "usos_profe": 0,
@@ -140,7 +140,8 @@
       "usos_ia": 0,
       "usando_ia_desde": null,
       "usando_profe_desde": null,
-      "voltage": 235.0
+      "voltage": 235.8,
+      "energy": 0.01
     },
     {
       "id": "liceo_4",
@@ -166,7 +167,8 @@
       "usos_ia": 0,
       "usando_ia_desde": null,
       "usando_profe_desde": null,
-      "voltage": 234.8
+      "voltage": 235.6,
+      "energy": 0.62
     },
     {
       "id": "liceo_5",
@@ -188,8 +190,8 @@
         "sensor.liceo_5_potencia_de_la_fase_c",
         "sensor.liceo_5_tension_de_la_fase_c"
       ],
-      "voltage": 234.8,
-      "energy": 0.0,
+      "voltage": 235.3,
+      "energy": 0.03,
       "current": 0.0,
       "usos_profe": 0,
       "usos_ia": 0,
@@ -202,7 +204,7 @@
       "tuya_id": "eb3ecccb08de5e8fdaxqjq",
       "entity_id": "switch.liceo_6_interruptor",
       "nombre": "Liceo-6",
-      "estado": false,
+      "estado": true,
       "tarjeta": "B5B7FAD",
       "energy_entity": "sensor.liceo_6_energia_total",
       "entities": [
@@ -217,7 +219,7 @@
         "sensor.liceo_6_potencia_de_la_fase_c",
         "sensor.liceo_6_tension_de_la_fase_c"
       ],
-      "voltage": 234.8,
+      "voltage": 235.5,
       "current": 0.0,
       "power": 0.0,
       "consumption_last_ws": 0.0,
@@ -225,7 +227,7 @@
       "usos_ia": 0,
       "usando_ia_desde": null,
       "usando_profe_desde": null,
-      "energy": 0.0
+      "energy": 0.68
     },
     {
       "id": "eb3ecccb08de5e8fdaxqjq",
@@ -247,7 +249,7 @@
         "sensor.liceo_7_potencia_de_la_fase_c",
         "sensor.liceo_7_tension_de_la_fase_c"
       ],
-      "voltage": 234.7,
+      "voltage": 235.2,
       "current": 0.0,
       "power": 0.0,
       "usos_profe": 0,
@@ -276,14 +278,14 @@
         "sensor.liceo_8_potencia_de_la_fase_c",
         "sensor.liceo_8_tension_de_la_fase_c"
       ],
-      "voltage": 235.2,
+      "voltage": 236.0,
       "current": 0.0,
       "power": 0.0,
       "usos_profe": 0,
       "usos_ia": 0,
       "usando_ia_desde": null,
       "usando_profe_desde": null,
-      "consumption_last_ws": 10.0,
+      "consumption_last_ws": 82.0,
       "energy": 0.01
     },
     {
@@ -291,7 +293,7 @@
       "tuya_id": "eb9a238727302e4422hpdm",
       "entity_id": "switch.liceo_9_interruptor",
       "nombre": "Liceo-9",
-      "estado": true,
+      "estado": false,
       "tarjeta": "35F515AD",
       "energy_entity": "sensor.liceo_9_energia_total",
       "entities": [
@@ -308,8 +310,8 @@
       ],
       "current": 0.0,
       "power": 0.0,
-      "voltage": 234.8,
-      "consumption_last_ws": 10.0,
+      "voltage": 235.6,
+      "consumption_last_ws": 46.0,
       "usos_profe": 0,
       "usos_ia": 0,
       "usando_ia_desde": null,
@@ -321,73 +323,42 @@
     {
       "id": "EOLICO",
       "es_estacion_carga": true,
-      "w_por_segundo": 10,
+      "w_por_segundo": 1,
       "last": {
         "id": "EOLICO",
         "nfc": "E5104AD",
         "ts": 1759365531895
       },
-      "charging": [
-        {
-          "uid": "E5104AD",
-          "started_ms": 1759365531895,
-          "wps": 10.0,
-          "last": {
-            "id": "EOLICO",
-            "nfc": "E5104AD",
-            "ts": 1759365531895
-          }
-        }
-      ]
+      "charging": []
     },
     {
       "id": "SOLAR",
       "es_estacion_carga": true,
-      "w_por_segundo": 10,
+      "w_por_segundo": 100.5,
       "last": {
         "id": "SOLAR",
-        "nfc": "958710AD",
-        "ts": 1759876537268
+        "nfc": "1651B89E",
+        "ts": 1759882640275
       },
       "charging": [
         {
-          "uid": "E5104AD",
-          "started_ms": 1759365456220,
-          "wps": 10.0,
+          "uid": "C5A56AD",
+          "started_ms": 1759881190376,
+          "wps": 100.5,
           "last": {
             "id": "SOLAR",
-            "nfc": "E5104AD",
-            "ts": 1759365747551
+            "nfc": "C5A56AD",
+            "ts": 1759881190376
           }
         },
         {
-          "uid": "958710AD",
-          "started_ms": 1759872110794,
-          "wps": 10.0,
+          "uid": "35F515AD",
+          "started_ms": 1759881291547,
+          "wps": 100.5,
           "last": {
             "id": "SOLAR",
-            "nfc": "958710AD",
-            "ts": 1759876537268
-          }
-        },
-        {
-          "uid": "B5B7FAD",
-          "started_ms": 1759875572926,
-          "wps": 10.0,
-          "last": {
-            "id": "SOLAR",
-            "nfc": "B5B7FAD",
-            "ts": 1759875572926
-          }
-        },
-        {
-          "uid": "1651B89E",
-          "started_ms": 1759875586298,
-          "wps": 10.0,
-          "last": {
-            "id": "SOLAR",
-            "nfc": "1651B89E",
-            "ts": 1759875586298
+            "nfc": "35F515AD",
+            "ts": 1759881291547
           }
         }
       ]
@@ -395,7 +366,6 @@
     {
       "id": "ESP8266_01",
       "es_estacion_carga": false,
-      "w_por_segundo": 1,
       "last": {
         "id": "ESP8266_01",
         "nfc": "D69335A4"
@@ -428,46 +398,14 @@
         "id": "ESP8266_03",
         "nfc": "C5A56AD",
         "ts": 1759362597079
-      },
-      "charging": [
-        {
-          "uid": "958710AD",
-          "started_ms": 1758057895293,
-          "wps": 10.0,
-          "last": {
-            "id": "ESP8266_03",
-            "nfc": "958710AD",
-            "ts": 1758057898862
-          }
-        },
-        {
-          "uid": "35F515AD",
-          "started_ms": 1759362581585,
-          "wps": 10.0,
-          "last": {
-            "id": "ESP8266_03",
-            "nfc": "35F515AD",
-            "ts": 1759362593798
-          }
-        },
-        {
-          "uid": "C5A56AD",
-          "started_ms": 1759362597079,
-          "wps": 10.0,
-          "last": {
-            "id": "ESP8266_03",
-            "nfc": "C5A56AD",
-            "ts": 1759362597079
-          }
-        }
-      ]
+      }
     },
     {
       "id": "ESP8266_04",
       "es_estacion_carga": false,
       "last": {
         "id": "ESP8266_04",
-        "nfc": "45E9DAD"
+        "nfc": "1651B89E"
       }
     },
     {
