@@ -17,10 +17,10 @@ String ipObtenida = "";  // se obtiene desde Google Sheets
 #define RST_PIN D3  // Pin RST del MFRC522
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 
-const char* espID = "ESP8266_04";   // Identificador del ESP 
+const char* espID = "ESP8266_02";   // Identificador del ESP 
 
 // ---------------- LED MÓDULO ----------------
-#define LED_MODULO D1   // Cable blanco del módulo
+#define LED_MODULO D1   // Cable blanc2o del módulo
 
 // ---------------- SETUP ----------------
 void setup() {

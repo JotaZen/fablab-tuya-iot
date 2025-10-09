@@ -145,23 +145,54 @@
         box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
       }
 
-      /* Estado ON con brillo verde */
-      .breaker-card.on {
-        border-color: rgba(0, 255, 136, 0.7);
-        background: rgba(0, 255, 136, 0.05);
+      /* Tarjeta con saldo mayor a 3000 - AZUL */
+      .breaker-card.high-balance {
+        border-color: rgba(0, 150, 255, 0.8);
+        background: rgba(0, 150, 255, 0.15);
+        box-shadow: 0 0 25px rgba(0, 150, 255, 0.4), 0 6px 20px rgba(0, 0, 0, 0.5);
       }
 
-      .breaker-card.on::before {
+      .breaker-card.high-balance::before {
         content: "";
         position: absolute;
         top: 10px;
         right: 10px;
         width: 15px;
         height: 15px;
-        background: #00ff88;
+        background: #0096ff;
         border-radius: 50%;
-        box-shadow: 0 0 15px #00ff88, 0 0 30px #00ff88;
+        box-shadow: 0 0 15px #0096ff, 0 0 30px #0096ff;
         animation: pulse 2s ease-in-out infinite;
+      }
+
+      /* Tarjeta con saldo menor a 3000 - ROJO */
+      .breaker-card.low-balance {
+        border-color: rgba(255, 50, 50, 0.8);
+        background: rgba(255, 50, 50, 0.15);
+        box-shadow: 0 0 25px rgba(255, 50, 50, 0.4), 0 6px 20px rgba(0, 0, 0, 0.5);
+        animation: redPulse 2s ease-in-out infinite;
+      }
+
+      .breaker-card.low-balance::before {
+        content: "";
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 15px;
+        height: 15px;
+        background: #ff3232;
+        border-radius: 50%;
+        box-shadow: 0 0 15px #ff3232, 0 0 30px #ff3232;
+        animation: pulse 2s ease-in-out infinite;
+      }
+
+      @keyframes redPulse {
+        0%, 100% {
+          box-shadow: 0 0 20px rgba(255, 50, 50, 0.3), 0 6px 20px rgba(0, 0, 0, 0.5);
+        }
+        50% {
+          box-shadow: 0 0 35px rgba(255, 50, 50, 0.6), 0 6px 20px rgba(0, 0, 0, 0.5);
+        }
       }
 
       @keyframes pulse {
@@ -172,34 +203,6 @@
         50% {
           transform: scale(1.3);
           opacity: 0.7;
-        }
-      }
-
-      /* Alerta de energía baja */
-      .breaker-card.low-balance {
-        border-color: #ff9900;
-        background: rgba(255, 153, 0, 0.1);
-      }
-
-      .breaker-card.low-balance::before {
-        background: #ff9900;
-        box-shadow: 0 0 15px #ff9900;
-        animation: pulse 2s ease-in-out infinite;
-      }
-
-      /* Alerta crítica */
-      .breaker-card.critical-balance {
-        animation: criticalBlink 2s ease-in-out infinite;
-      }
-
-      @keyframes criticalBlink {
-        0%, 100% {
-          border-color: #ff3366;
-          background: rgba(255, 51, 102, 0.1);
-        }
-        50% {
-          border-color: #ff6699;
-          background: rgba(255, 51, 102, 0.15);
         }
       }
 
@@ -624,8 +627,8 @@
       let currentModels = { breakers: [], tarjetas: [], arduinos: [] };
       let isConnected = false;
       let usageLimits = {
-        tiempo_profe_segundos: 1800,
-        tiempo_ia_segundos: 900,
+        tiempo_profe_segundos: 300,
+        tiempo_ia_segundos: 180,
         max_usos_profe: 5,
         max_usos_ia: 3
       };
@@ -752,34 +755,35 @@
           const maxEnergia = 200000;
           const energiaPercent = Math.min((energia / maxEnergia) * 100, 100);
 
-          // Verificar si la tarjeta está en carga
+          // Verificar si la tarjeta está en carga y en qué estación
           let isCharging = false;
+          let chargingStation = null;
           if (tarjeta) {
             arduinos.forEach((arduino) => {
               if (arduino.charging && Array.isArray(arduino.charging)) {
                 const charging = arduino.charging.find((c) => c.uid === tarjeta.id);
                 if (charging) {
                   isCharging = true;
+                  chargingStation = arduino.id; // Guardar el nombre de la estación
                 }
               }
             });
           }
 
-          // Determinar alertas de energía
+          // Determinar alertas de energía y color de tarjeta
           let balanceClass = "";
           let cardClass = "breaker-card";
 
           if (isCharging) {
+            // AMARILLO cuando está cargando
             cardClass += " charging";
-          } else if (breaker.estado) {
-            cardClass += " on";
-            if (energia < 10000) {
-              balanceClass = "critical";
-              cardClass += " critical-balance";
-            } else if (energia < 50000) {
-              balanceClass = "low";
-              cardClass += " low-balance";
-            }
+          } else if (energia < 3000) {
+            // ROJO cuando saldo < 3000
+            cardClass += " low-balance";
+            balanceClass = "critical";
+          } else {
+            // AZUL cuando saldo >= 3000
+            cardClass += " high-balance";
           }
 
           let progressClass = "progress-fill";
@@ -804,6 +808,10 @@
                 <div class="energy-value">
                   ${Math.round(energia/1000).toLocaleString()}<span class="energy-unit">KW</span>
                 </div>
+              </div>
+              <div class="charging-station">
+                <div class="station-icon">🔌</div>
+                <div class="station-name">Estación: ${chargingStation || "Desconocida"}</div>
               </div>
               <div class="card-logo"><img src="/static/logos/${logoNumber}.jpg" alt="Logo ${logoNumber}" onerror="this.style.display='none'"></div>
             `;
@@ -957,10 +965,32 @@
         });
       }
 
-      // ✅ FETCH INICIAL SOLO UNA VEZ - WebSocket maneja el resto
+      // ✅ FETCH INICIAL - Cargar datos al iniciar
       fetchInitialData();
       
-      // ✅ Solo actualizar UI local cada segundo (sin HTTP)
+      // ✅ Recargar datos completos cada 5 segundos
+      setInterval(async () => {
+        try {
+          console.log('[Auto-refresh] Recargando datos...');
+          const response = await fetch("/models");
+          const data = await response.json();
+          currentModels = data;
+          
+          // También recargar límites de uso
+          const limitsResponse = await fetch("/usage-limits");
+          const limitsData = await limitsResponse.json();
+          if (limitsData.ok && limitsData.limits) {
+            usageLimits = limitsData.limits;
+          }
+          
+          renderDisplay();
+          console.log('[Auto-refresh] Datos actualizados exitosamente');
+        } catch (e) {
+          console.error('[Auto-refresh] Error recargando datos:', e);
+        }
+      }, 5000); // 5000ms = 5 segundos
+      
+      // ✅ Actualizar UI local cada segundo (timestamp y timers)
       setInterval(updateTimestamp, 1000);
       setInterval(updateTimers, 1000);
 

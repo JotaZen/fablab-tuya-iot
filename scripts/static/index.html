@@ -321,38 +321,35 @@
             (estado === "on" ? "ON" : "OFF") +
             "</span></div></div>";
 
-          // Generar bloque de uso/temporizador
+          // Generar bloque de uso/temporizador - SIEMPRE VISIBLE
           const usosProfe = br.usos_profe || 0;
           const usosIA = br.usos_ia || 0;
           const usandoProfeDesde = br.usando_profe_desde;
           const usandoIADesde = br.usando_ia_desde;
           
-          let usageHtml = '';
-          if (usandoProfeDesde || usandoIADesde || usosProfe > 0 || usosIA > 0) {
-            const isActiveProfe = !!usandoProfeDesde;
-            const isActiveIA = !!usandoIADesde;
-            usageHtml = '<div class="usage-card ' + 
-              (isActiveProfe || isActiveIA ? 'timer-active' : '') + 
-              '" data-usage-card="' + br.id + '">' +
-              '<div class="muted small"><strong>📊 Control de Uso</strong></div>' +
-              '<div class="small">Profe: ' + usosProfe + ' usos' +
-              (isActiveProfe ? ' <span class="timer-display" data-timer-profe="' + br.id + '">⏱️ --:--</span>' : '') +
-              '</div>' +
-              '<div class="small">IA: ' + usosIA + ' usos' +
-              (isActiveIA ? ' <span class="timer-display" data-timer-ia="' + br.id + '">⏱️ --:--</span>' : '') +
-              '</div>' +
-              '<div style="margin-top:6px">' +
-              '<button class="btn success small btn-start-timer" data-bid="' + br.id + '" data-type="profe" ' +
-              (isActiveProfe ? 'disabled' : '') + '>▶️ Iniciar Profe</button> ' +
-              '<button class="btn warning small btn-start-timer" data-bid="' + br.id + '" data-type="ia" ' +
-              (isActiveIA ? 'disabled' : '') + '>▶️ Iniciar IA</button><br/>' +
-              '<button class="btn danger small btn-stop-timer" data-bid="' + br.id + '" data-type="profe" ' +
-              (!isActiveProfe ? 'disabled' : '') + '>⏹️ Detener Profe</button> ' +
-              '<button class="btn danger small btn-stop-timer" data-bid="' + br.id + '" data-type="ia" ' +
-              (!isActiveIA ? 'disabled' : '') + '>⏹️ Detener IA</button> ' +
-              '<button class="btn secondary small btn-reset-usage" data-bid="' + br.id + '">🔄 Reset</button>' +
-              '</div></div>';
-          }
+          const isActiveProfe = !!usandoProfeDesde;
+          const isActiveIA = !!usandoIADesde;
+          const usageHtml = '<div class="usage-card ' + 
+            (isActiveProfe || isActiveIA ? 'timer-active' : '') + 
+            '" data-usage-card="' + br.id + '">' +
+            '<div class="muted small"><strong>📊 Control de Uso</strong></div>' +
+            '<div class="small">👨‍🏫 Profe: ' + usosProfe + ' usos' +
+            (isActiveProfe ? ' <span class="timer-display" data-timer-profe="' + br.id + '">⏱️ --:--</span>' : '') +
+            '</div>' +
+            '<div class="small">🤖 IA: ' + usosIA + ' usos' +
+            (isActiveIA ? ' <span class="timer-display" data-timer-ia="' + br.id + '">⏱️ --:--</span>' : '') +
+            '</div>' +
+            '<div style="margin-top:6px">' +
+            '<button class="btn success small btn-start-timer" data-bid="' + br.id + '" data-type="profe" ' +
+            (isActiveProfe ? 'disabled' : '') + '>▶️ Iniciar Profe</button> ' +
+            '<button class="btn warning small btn-start-timer" data-bid="' + br.id + '" data-type="ia" ' +
+            (isActiveIA ? 'disabled' : '') + '>▶️ Iniciar IA</button><br/>' +
+            '<button class="btn danger small btn-stop-timer" data-bid="' + br.id + '" data-type="profe" ' +
+            (!isActiveProfe ? 'disabled' : '') + '>⏹️ Detener Profe</button> ' +
+            '<button class="btn danger small btn-stop-timer" data-bid="' + br.id + '" data-type="ia" ' +
+            (!isActiveIA ? 'disabled' : '') + '>⏹️ Detener IA</button> ' +
+            '<button class="btn secondary small btn-reset-usage" data-bid="' + br.id + '">🔄 Reset</button>' +
+            '</div></div>';
 
           const body =
             hdr +
@@ -400,7 +397,11 @@
             br.id +
             '" class="btn">' +
             (br.estado ? "Apagar" : "Encender") +
-            "</button>";
+            '</button> ' +
+            '<button class="btn secondary btn-reset-consumption" data-bid="' +
+            br.id +
+            '">🔄 Reset Consumo</button>' +
+            "</div>";
 
           const card = document.createElement("div");
           card.className = "card";
@@ -630,6 +631,28 @@
                 fetchModels();
               }
             }
+          } else if (target.matches(".btn-reset-consumption")) {
+            // Resetear solo el consumo del breaker
+            const bid = target.getAttribute("data-bid");
+            
+            if (confirm('¿Resetear el consumo de este breaker a 0?')) {
+              const res = await fetch(
+                "/breakers/" + encodeURIComponent(bid) + "/consumption/reset",
+                { method: "POST" }
+              ).then((r) => r.json());
+              
+              logEvent(res);
+              if (res.ok) {
+                // El servidor ya envió broadcast, actualizar modelo local
+                const br = currentModels.breakers.find((x) => x.id === bid);
+                if (br) {
+                  br.power = 0;
+                  br.current = 0;
+                  br.consumption_last_ws = 0;
+                  updateBreakerCard(bid);
+                }
+              }
+            }
           }
         });
       }
@@ -743,13 +766,10 @@
           "badge " + (estado === "on" ? "on" : "off");
         card.querySelector(".badge").textContent =
           estado === "on" ? "ON" : "OFF";
-        // Reemplazar bloque de métricas (buscar por texto 'Saldo:')
-        const metricsRegex = /Saldo:[\s\S]*?<\/div>/;
+        // Reemplazar bloque de métricas (buscar por texto 'Potencia:')
+        const metricsRegex = /Potencia:[\s\S]*?A<\/strong><\/div>/;
         card.innerHTML = card.innerHTML.replace(metricsRegex, () => {
           return (
-            '<div class="muted">Saldo: <strong>' +
-            saldo +
-            "</strong><br/>" +
             "Potencia: <strong>" +
             power +
             " W</strong> &nbsp; Energía: <strong>" +
@@ -762,8 +782,7 @@
             voltage +
             " V</strong> &nbsp; Corriente: <strong>" +
             current +
-            " A</strong>" +
-            "</div>"
+            " A</strong></div>"
           );
         });
       }

@@ -107,14 +107,19 @@ async def set_breaker(path: str, breaker_id: str, state: bool) -> Dict[str, Any]
     # Priorizar entity_id si parece una entidad de HA (contiene punto)
     # Esto permite que el control vía HA funcione correctamente desde la UI
     entity_id = br.get('entity_id')
+    tuya_id = br.get('tuya_id')
+    nombre = br.get('nombre', 'SIN_NOMBRE')
+    
     if entity_id and '.' in str(entity_id):
         device_id = entity_id
-        print(f"set_breaker: using HA entity_id={entity_id} for breaker {breaker_id}")
+        print(f"🔧 set_breaker [{nombre}]: ID={breaker_id}, entity_id={entity_id}, tuya_id={tuya_id}, state={'ON' if state else 'OFF'}")
     else:
         device_id = (br.get('device_id') or br.get('tuya_device') or br.get('tuya_id') or br.get('tuya') or entity_id)
-        print(f"set_breaker: using device_id={device_id} for breaker {breaker_id} (not HA entity)")
+        print(f"🔧 set_breaker [{nombre}]: ID={breaker_id}, device_id={device_id}, tuya_id={tuya_id}, state={'ON' if state else 'OFF'} (not HA entity)")
+    
     if not device_id:
-        print(f"set_breaker: no device identifier found for breaker {breaker_id}; breaker data keys={list(br.keys())}")
+        print(f"⚠️ set_breaker [{nombre}]: NO device identifier found! breaker_id={breaker_id}, keys={list(br.keys())}")
+    
     action = 'encender' if state else 'apagar'
     tuya_res = await _run_tuya_action(device_id or '', action)
     # normalize older 'ok' key if present
@@ -122,6 +127,12 @@ async def set_breaker(path: str, breaker_id: str, state: bool) -> Dict[str, Any]
         tuya_res['success'] = bool(tuya_res.pop('ok'))
     tuya_res.setdefault('action', action)
     res['tuya'] = tuya_res
+    
+    # Log del resultado de Tuya
+    if tuya_res.get('success'):
+        print(f"   ✅ Tuya response OK para {nombre}: {tuya_res.get('msg', 'success')}")
+    else:
+        print(f"   ❌ Tuya response FAILED para {nombre}: {tuya_res.get('msg', 'unknown error')}")
 
     # home assistant
     entity = br.get('entity_id')
@@ -129,6 +140,12 @@ async def set_breaker(path: str, breaker_id: str, state: bool) -> Dict[str, Any]
         svc = 'turn_on' if state else 'turn_off'
         ha_res = await _call_ha_service(entity, svc)
         res['ha'] = ha_res
+        
+        # Log del resultado de HA
+        if ha_res.get('ok'):
+            print(f"   ✅ Home Assistant response OK para {nombre}: service={svc}, entity={entity}")
+        else:
+            print(f"   ❌ Home Assistant response FAILED para {nombre}: {ha_res.get('error', 'unknown error')}")
 
     # Si encendemos el breaker, inicializar su saldo desde la tarjeta asociada (si existe)
     if state:

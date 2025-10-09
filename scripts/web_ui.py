@@ -103,15 +103,15 @@ def load_usage_limits():
         with open(USAGE_LIMITS_PATH, 'r', encoding='utf8') as f:
             data = json.load(f)
             return data.get('limites', {
-                'tiempo_profe_segundos': 1800,
-                'tiempo_ia_segundos': 900,
+                'tiempo_profe_segundos': 300,
+                'tiempo_ia_segundos': 180,
                 'max_usos_profe': 5,
                 'max_usos_ia': 3
             })
     except Exception:
         return {
-            'tiempo_profe_segundos': 1800,
-            'tiempo_ia_segundos': 900,
+            'tiempo_profe_segundos': 300,
+            'tiempo_ia_segundos': 180,
             'max_usos_profe': 5,
             'max_usos_ia': 3
         }
@@ -267,13 +267,70 @@ async def rfid_post(request):
                     payload.setdefault('ts', now_ms)
                     matched['last'] = payload
                     uid_seen = payload.get('uid') or payload.get('rfid') or payload.get('nfc')
-                    # inicializar lista de sesiones si no existe
+                    
+                    # NUEVA LÓGICA: Liquidar sesiones en OTRAS estaciones antes de crear nueva sesión
+                    if uid_seen:
+                        total_cargado = 0.0
+                        arduinos = models.get('arduinos', [])
+                        
+                        # Recorrer TODAS las estaciones de carga
+                        for ad in arduinos:
+                            try:
+                                # Saltar si no es estación de carga O si es la estación actual
+                                if not bool(ad.get('es_estacion_carga')) or ad.get('id') == matched.get('id'):
+                                    continue
+                                
+                                # Buscar y liquidar sesiones de esta tarjeta en otras estaciones
+                                charging_other = ad.get('charging') if isinstance(ad.get('charging'), list) else []
+                                remaining_other = []
+                                
+                                for s in charging_other:
+                                    try:
+                                        if s.get('uid') != uid_seen:
+                                            remaining_other.append(s)
+                                            continue
+                                        
+                                        # Liquidar esta sesión
+                                        wps = float(s.get('wps') if s.get('wps') is not None else (ad.get('w_por_segundo') or 0.0))
+                                        started = int(s.get('started_ms') or now_ms)
+                                        elapsed_ms = max(0, now_ms - started)
+                                        energia_cargada = wps * (elapsed_ms / 1000.0)
+                                        total_cargado += energia_cargada
+                                        
+                                        print(f"[Cambio de estación] {uid_seen} liquidado de {ad.get('id')}: {energia_cargada:.2f}W ({elapsed_ms/1000:.1f}s a {wps}W/s)")
+                                        
+                                        # NO agregar a remaining (liquidamos la sesión)
+                                    except Exception as e:
+                                        print(f"[Cambio de estación] Error liquidando sesión: {e}")
+                                        pass
+                                
+                                # Actualizar lista de charging sin esta tarjeta
+                                ad['charging'] = remaining_other
+                                
+                            except Exception as e:
+                                print(f"[Cambio de estación] Error procesando estación {ad.get('id')}: {e}")
+                                continue
+                        
+                        # Sumar energía cargada al saldo de la tarjeta
+                        if total_cargado > 0:
+                            tarjetas = models.get('tarjetas', [])
+                            t = next((t for t in tarjetas if t.get('id') == uid_seen), None)
+                            if t is not None:
+                                try:
+                                    current = float(t.get('saldo') or 0.0)
+                                except Exception:
+                                    current = 0.0
+                                t['saldo'] = round(current + total_cargado, 6)
+                                print(f"[Cambio de estación] {uid_seen} saldo actualizado: +{total_cargado:.2f}W -> {t['saldo']:.2f}W")
+                                asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': uid_seen, 'tarjeta': t}))
+                    
+                    # Continuar con la lógica normal de la estación actual
                     charging = matched.get('charging')
                     if not isinstance(charging, list):
                         charging = []
                         matched['charging'] = charging
                     if uid_seen:
-                        # buscar sesión existente por UID
+                        # buscar sesión existente por UID en esta estación
                         sess = None
                         for s in charging:
                             if s.get('uid') == uid_seen:
@@ -287,11 +344,12 @@ async def rfid_post(request):
                                 wps = 0.0
                             sess = {
                                 'uid': uid_seen,
-                                'started_ms': int(payload.get('ts') or payload.get('timestamp') or now_ms),
+                                'started_ms': now_ms,
                                 'wps': wps,
                                 'last': payload,
                             }
                             charging.append(sess)
+                            print(f"[Cambio de estación] {uid_seen} nueva sesión iniciada en {matched.get('id')} a {wps}W/s")
                         else:
                             # actualizar última lectura, no pisar started_ms si ya existe
                             sess['last'] = payload
@@ -302,8 +360,44 @@ async def rfid_post(request):
                                     sess['wps'] = float(matched.get('w_por_segundo') or 0.0)
                                 except Exception:
                                     sess['wps'] = 0.0
+                    
+                    # APAGAR breaker cuando inicia carga (solo si está encendido)
+                    if uid_seen:
+                        try:
+                            breakers = models.get('breakers', [])
+                            br = next((b for b in breakers if b.get('tarjeta') == uid_seen), None)
+                            if br:
+                                br_id = br.get('id')
+                                # Solo apagar si está encendido
+                                if br.get('estado'):
+                                    print(f"[Carga iniciada] Apagando breaker {br_id} de tarjeta {uid_seen}")
+                                    
+                                    # Actualizar estado local
+                                    br['estado'] = False
+                                    
+                                    # Intentar apagar físicamente
+                                    try:
+                                        svc_res = await set_breaker(DATA_PATH, br_id, False)
+                                        if svc_res.get('ok'):
+                                            print(f"[Carga iniciada] Breaker {br_id} apagado exitosamente")
+                                        else:
+                                            print(f"[Carga iniciada] Error apagando breaker {br_id}: {svc_res.get('error')}")
+                                    except Exception as e:
+                                        print(f"[Carga iniciada] Excepción apagando breaker {br_id}: {e}")
+                                    
+                                    # Broadcast del cambio de estado
+                                    asyncio.create_task(state.broadcast({'type': 'breakers:update', 'id': br_id, 'state': 'off'}))
+                                else:
+                                    print(f"[Carga continúa] Breaker {br_id} ya está apagado (cargando)")
+                        except Exception as e:
+                            print(f"[Carga iniciada] Error procesando apagado de breaker: {e}")
+                    
                     if save_models(models):
                         asyncio.create_task(state.broadcast({'type': 'arduinos:update', 'id': matched.get('id'), 'arduino': matched}))
+                        # Broadcast de todas las estaciones afectadas
+                        for ad in arduinos:
+                            if bool(ad.get('es_estacion_carga')) and ad.get('id') != matched.get('id'):
+                                asyncio.create_task(state.broadcast({'type': 'arduinos:update', 'id': ad.get('id'), 'arduino': ad}))
                 else:
                     # Lector normal: liquidar carga si existe en cualquier estación
                     uid_seen = data.get('uid') or data.get('rfid') or data.get('nfc')
@@ -349,6 +443,8 @@ async def rfid_post(request):
                                         ad['last'] = None
                             except Exception:
                                 continue
+                        
+                        # Actualizar saldo si hubo carga
                         if total > 0:
                             tarjetas = models.get('tarjetas', [])
                             t = next((t for t in tarjetas if t.get('id') == uid_seen), None)
@@ -358,7 +454,43 @@ async def rfid_post(request):
                                 except Exception:
                                     current = 0.0
                                 t['saldo'] = round(current + total, 6)
+                                print(f"[Carga liquidada] {uid_seen} recibió {total:.2f}W, saldo: {t['saldo']:.2f}W")
                                 asyncio.create_task(state.broadcast({'type': 'tarjetas:update', 'id': uid_seen, 'tarjeta': t}))
+                        
+                        # ENCENDER breaker automáticamente después de liquidar carga (siempre, haya o no energía)
+                        try:
+                            breakers = models.get('breakers', [])
+                            br = next((b for b in breakers if b.get('tarjeta') == uid_seen), None)
+                            if br:
+                                br_id = br.get('id')
+                                # Verificar si el saldo es suficiente para encender
+                                tarjetas = models.get('tarjetas', [])
+                                t = next((t for t in tarjetas if t.get('id') == uid_seen), None)
+                                tiene_saldo = t and float(t.get('saldo', 0)) > 0
+                                
+                                if tiene_saldo:
+                                    print(f"[Carga liquidada] Encendiendo breaker {br_id} de tarjeta {uid_seen}")
+                                    
+                                    # Actualizar estado local
+                                    br['estado'] = True
+                                    
+                                    # SIEMPRE intentar encender físicamente (ignorar estado anterior)
+                                    try:
+                                        svc_res = await set_breaker(DATA_PATH, br_id, True)
+                                        if svc_res.get('ok'):
+                                            print(f"[Carga liquidada] Breaker {br_id} encendido exitosamente")
+                                        else:
+                                            print(f"[Carga liquidada] Error encendiendo breaker {br_id}: {svc_res.get('error')}")
+                                    except Exception as e:
+                                        print(f"[Carga liquidada] Excepción encendiendo breaker {br_id}: {e}")
+                                    
+                                    # Broadcast del cambio de estado
+                                    asyncio.create_task(state.broadcast({'type': 'breakers:update', 'id': br_id, 'state': 'on'}))
+                                else:
+                                    print(f"[Carga liquidada] Breaker {br_id} NO encendido - sin saldo suficiente")
+                        except Exception as e:
+                            print(f"[Carga liquidada] Error procesando encendido de breaker: {e}")
+                        
                         if save_models(models):
                             for ad in arduinos:
                                 if bool(ad.get('es_estacion_carga')):
@@ -377,20 +509,8 @@ async def rfid_post(request):
             if tarjeta:
                 # notificar escaneo de tarjeta
                 asyncio.create_task(state.broadcast({'type': 'tarjetas:scanned', 'tarjeta': tarjeta, 'origen': origen, 'arduino_last': matched.get('last') if matched else None}))
-                # controlar breakers asociados: si la tarjeta tiene saldo > 0 encender, si no apagar
-                try:
-                    for b in models.get('breakers', []):
-                        if b.get('tarjeta') == tarjeta.get('id'):
-                            desired = float(tarjeta.get('saldo') or 0.0) > 0.0
-                            if bool(b.get('estado')) != desired:
-                                # set_breaker_state persistirá y realizará acciones externas
-                                try:
-                                    set_breaker_state(DATA_PATH, b.get('id'), desired)
-                                except Exception:
-                                    print('rfid_post: set_breaker_state error')
-                                asyncio.create_task(state.broadcast({'type': 'breakers:update', 'id': b.get('id'), 'state': 'on' if desired else 'off'}))
-                except Exception as e:
-                    print('rfid_post set_breaker error', e)
+                # El control del breaker ya se hizo en la sección de liquidación de carga arriba
+                # No hacer nada más aquí para evitar conflictos
         except Exception as e:
             print('rfid_post tarjeta association error', e)
 
@@ -850,6 +970,28 @@ async def breaker_usage_reset_handler(request):
     return web.json_response({'ok': True, 'id': bid, 'reset': reset_type, 'fields': fields})
 
 
+async def breaker_reset_consumption_handler(request):
+    """POST /breakers/{id}/consumption/reset - Resetear valores de consumo de un breaker
+    
+    Resetea: power, current, consumption_last_ws a 0
+    """
+    bid = request.match_info.get('id')
+    br = get_breaker(DATA_PATH, bid)
+    if not br:
+        return web.json_response({'ok': False, 'error': 'unknown breaker'}, status=404)
+    
+    fields = {
+        'power': 0.0,
+        'current': 0.0,
+        'consumption_last_ws': 0.0
+    }
+    
+    update_breaker_fields(DATA_PATH, bid, **fields)
+    asyncio.create_task(state.broadcast({'type': 'breakers:consumption', 'id': bid, **fields}))
+    
+    return web.json_response({'ok': True, 'id': bid, 'fields': fields})
+
+
 _last_tick_time = 0  # timestamp del último tick procesado
 _tick_min_interval = 2.0  # mínimo intervalo entre ticks (segundos) - aumentado para reducir carga
 
@@ -1209,6 +1351,7 @@ def make_app():
     app.router.add_post('/breakers/{id}/refresh', breaker_refresh_handler)
     app.router.add_get('/breakers/consumption', breakers_consumption_handler)
     app.router.add_post('/breakers/tick-consumption', breakers_tick_consumption_handler)
+    app.router.add_post('/breakers/{id}/consumption/reset', breaker_reset_consumption_handler)
     # Rutas de uso/límites
     app.router.add_get('/usage-limits', usage_limits_handler)
     app.router.add_post('/usage-limits', usage_limits_update_handler)
@@ -1266,6 +1409,61 @@ def make_app():
 
     # registrar init_models primero para que los demás startup hooks asuman modelos cargados
     app.on_startup.append(_init_models)
+
+    # Apagar todos los breakers al inicio
+    async def _shutdown_all_breakers(app):
+        """Apaga todos los breakers físicamente y en data.json al iniciar el servidor.
+        Intenta 3 veces para asegurar que todos se apaguen correctamente."""
+        print('🔌 [Startup] Apagando todos los breakers (3 intentos por breaker)...')
+        try:
+            models = load_models()
+            breakers = models.get('breakers', [])
+            
+            for br in breakers:
+                br_id = br.get('id')
+                br_nombre = br.get('nombre', '')
+                if not br_id:
+                    continue
+                
+                # Intentar apagar 3 veces
+                success = False
+                for intento in range(1, 4):
+                    try:
+                        # Apagar físicamente usando set_breaker
+                        result = await set_breaker(DATA_PATH, br_id, False)
+                        
+                        if result.get('ok'):
+                            print(f'   ✅ Breaker {br_id} ({br_nombre}) apagado correctamente [intento {intento}/3]')
+                            success = True
+                            break  # Si se apagó correctamente, no hacer más intentos
+                        else:
+                            print(f'   ⚠️  Intento {intento}/3 falló para {br_id} ({br_nombre}): {result.get("error", "unknown")}')
+                            if intento < 3:
+                                await asyncio.sleep(0.5)  # Esperar 500ms antes del siguiente intento
+                        
+                    except Exception as e:
+                        print(f'   ❌ Excepción en intento {intento}/3 para {br_id} ({br_nombre}): {e}')
+                        if intento < 3:
+                            await asyncio.sleep(0.5)
+                
+                # Resultado final del breaker
+                if not success:
+                    print(f'   🔴 FALLO CRÍTICO: Breaker {br_id} ({br_nombre}) NO se pudo apagar después de 3 intentos')
+                
+                # Broadcast del cambio (incluso si falló, para actualizar UI)
+                asyncio.create_task(state.broadcast({
+                    'type': 'breakers:update',
+                    'id': br_id,
+                    'state': 'off'
+                }))
+            
+            print('✅ [Startup] Proceso de apagado de breakers completado')
+            
+        except Exception as e:
+            print(f'❌ [Startup] Error en apagado masivo de breakers: {e}')
+    
+    # Ejecutar después de _init_models para que los modelos estén cargados
+    app.on_startup.append(_shutdown_all_breakers)
 
     # inicio del consumption manager (deducción por segundo)
     import importlib
